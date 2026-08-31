@@ -474,11 +474,22 @@ void OpenTradeSet(bool isBuy, double slPrice, double tp1, double tp2, double tp3
 
    if(opened > 0)
      {
-      DrawLevelLine(activePrefix, "ENTRY", price, TimeCurrent(), isBuy?InpColorBuy:InpColorSell,
+      color clr = isBuy ? InpColorBuy : InpColorSell;
+
+      string an = activePrefix + "ENTRY_ARROW";
+      ObjectDelete(0, an);
+      ObjectCreate(0, an, isBuy ? OBJ_ARROW_UP : OBJ_ARROW_DOWN, 0, TimeCurrent(), price);
+      ObjectSetInteger(0, an, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, an, OBJPROP_WIDTH, 3);
+      ObjectSetInteger(0, an, OBJPROP_ANCHOR, isBuy ? ANCHOR_TOP : ANCHOR_BOTTOM);
+      ObjectSetInteger(0, an, OBJPROP_SELECTABLE, false);
+
+      DrawLevelLine(activePrefix, "ENTRY", price, TimeCurrent(), clr,
                     "ENTRADA " + DoubleToString(price,_Digits), STYLE_SOLID);
       DrawLevelLine(activePrefix, "SL", slPrice, TimeCurrent(), clrRed,
                     "STOP (ponto definido) " + DoubleToString(slPrice,_Digits), STYLE_DASH);
       g_activePrefix = activePrefix;
+      ChartRedraw(0);
      }
   }
 
@@ -577,6 +588,13 @@ void OnTick()
 
    if(!IsNewBar()) return;
 
+   // enquanto houver posicao aberta deste EA (e InpOneSetupAtATime=true), congela
+   // a busca por uma nova perna: sem isso, o Fibo/OTE/OB da tela era redesenhado
+   // para a perna mais recente a cada nova vela, mesmo com uma operacao ja aberta
+   // baseada numa perna anterior - fazendo a zona "pular" para longe do preco
+   // atual e sem relacao nenhuma com a operacao em andamento
+   if(InpOneSetupAtATime && HasOpenPositions()) return;
+
    int minBars = InpSwingBars*2 + InpOBLookback + 10;
    int totalBars = Bars(_Symbol, _Period);
    if(totalBars-1 < minBars) return;
@@ -619,6 +637,7 @@ void OnTick()
       if(g_haveOB)
          DrawOB(obTime);
 
+      ChartRedraw(0);
       g_state = STATE_ZONE_READY;
      }
 

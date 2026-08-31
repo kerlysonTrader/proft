@@ -86,10 +86,15 @@ desenhar, **envia ordens reais** quando o sinal é confirmado.
    couber dentro do risco definido, **a entrada é ignorada** (log no
    terminal) — o EA nunca infla o lote além do risco configurado só
    para conseguir operar.
-4. Desenha no gráfico a ENTRADA, o STOP e os alvos realmente enviados —
-   essas linhas só somem quando as posições dessa entrada forem
-   fechadas (por SL, TP ou manualmente), diferente das linhas de
-   busca (Fibo/OTE/OB), que são redesenhadas a cada nova perna.
+4. Desenha no gráfico a seta de ENTRADA, o STOP e os alvos realmente
+   enviados — esses objetos só somem quando as posições dessa entrada
+   forem fechadas (por SL, TP ou manualmente).
+5. Com `InpOneSetupAtATime = true` (padrão), enquanto houver posição
+   aberta deste EA no símbolo, a busca por uma nova perna fica
+   **congelada**: o Fibo/OTE/OB continua exatamente como estava quando
+   a entrada foi disparada, em vez de "pular" para uma perna nova a
+   cada vela (o que faria a zona exibida perder relação com a operação
+   já aberta). A busca só recomeça depois que a posição for fechada.
 
 ## Instalação
 
