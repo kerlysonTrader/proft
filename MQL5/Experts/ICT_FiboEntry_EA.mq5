@@ -92,6 +92,8 @@ int        g_atrHandle    = INVALID_HANDLE;
 double     g_obHigh = 0.0, g_obLow = 0.0;
 bool       g_haveOB = false;
 
+bool       g_allowMultiplePositions = true; // false em conta/simbolo NETTING (1 posicao por simbolo)
+
 //+------------------------------------------------------------------+
 int OnInit()
   {
@@ -103,6 +105,17 @@ int OnInit()
      }
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetDeviationInPoints(InpSlippagePoints);
+
+   // em conta NETTING (ou exchange), so existe 1 posicao por simbolo: varias
+   // chamadas Buy()/Sell() em sequencia nao abririam 3 posicoes separadas,
+   // elas se fundiriam numa unica posicao e a ULTIMA chamada sobrescreveria
+   // o SL/TP das anteriores - por isso, nesse tipo de conta, o EA usa
+   // sempre 1 unica entrada (com o alvo intermediario TP2), nunca 3
+   ENUM_ACCOUNT_MARGIN_MODE marginMode = (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
+   g_allowMultiplePositions = (marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
+   if(!g_allowMultiplePositions)
+      Print("ICT_FiboEntry_EA: conta em modo NETTING/EXCHANGE detectada - usando 1 entrada por sinal (sem dividir em 3 pernas)");
+
    return(INIT_SUCCEEDED);
   }
 
@@ -335,6 +348,41 @@ bool HasOpenPositions()
    return(false);
   }
 
+// trava de seguranca: enquanto o setup estiver "congelado" com uma posicao
+// aberta, verifica se o preco atual ja passou do Stop registrado na propria
+// posicao. Isso NUNCA deveria acontecer (a corretora deveria ter fechado
+// pelo SL), mas serve de rede de seguranca contra corrupcao de SL/TP (ex.:
+// contas NETTING fundindo varias ordens) ou qualquer outra falha de
+// execucao - sem isso, o EA ficaria travado indefinidamente numa posicao
+// que nunca fecha sozinha, como visto no teste
+void ManageOpenPositions()
+  {
+   for(int i = PositionsTotal()-1; i >= 0; i--)
+     {
+      string sym = PositionGetSymbol(i);
+      if(sym != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      double posSL = PositionGetDouble(POSITION_SL);
+      if(posSL <= 0) continue; // sem SL definido, nada a verificar aqui
+
+      long   type   = PositionGetInteger(POSITION_TYPE);
+      ulong  ticket = PositionGetInteger(POSITION_TICKET);
+      double bid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double ask    = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+      bool breached = (type == POSITION_TYPE_BUY  && bid <= posSL) ||
+                      (type == POSITION_TYPE_SELL && ask >= posSL);
+
+      if(breached)
+        {
+         Print("ICT_FiboEntry_EA: preco ja passou do Stop (", posSL,
+               ") e a posicao #", ticket, " continua aberta - fechando manualmente");
+         trade.PositionClose(ticket);
+        }
+     }
+  }
+
 // arredonda PARA BAIXO ao step do simbolo, sem forcar o lote minimo -
 // se o risco calculado for menor que o minimo negociavel, o resultado
 // fica abaixo de SYMBOL_VOLUME_MIN de proposito, para que BuildLegs()
@@ -370,10 +418,25 @@ double CalcTotalLot(double entryPrice, double slPrice)
 
 // divide o lote total em ate 3 pernas (TP1/TP2/TP3); se o lote minimo do
 // simbolo nao permitir 3 pernas, reduz para 2 e depois para 1 (usando o
-// alvo intermediario TP2 nesse ultimo caso)
+// alvo intermediario TP2 nesse ultimo caso). Em conta NETTING/EXCHANGE
+// (g_allowMultiplePositions=false), sempre usa 1 unica entrada, porque
+// varias posicoes no mesmo simbolo se fundiriam automaticamente
 int BuildLegs(double totalLot, double tp1, double tp2, double tp3, TradeLeg &legs[])
   {
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+
+   if(!g_allowMultiplePositions)
+     {
+      double soloLot = FloorLotToStep(totalLot);
+      if(soloLot >= minLot)
+        {
+         ArrayResize(legs, 1);
+         legs[0].tp = tp2; legs[0].lot = soloLot; legs[0].label = "TP2";
+         return(1);
+        }
+      ArrayResize(legs, 0);
+      return(0);
+     }
 
    double perLeg3 = FloorLotToStep(totalLot/3.0);
    if(perLeg3 >= minLot)
@@ -585,6 +648,11 @@ void OnTick()
       ObjectsDeleteAll(0, g_activePrefix);
       g_activePrefix = "";
      }
+
+   // roda a cada tick (nao so a cada vela nova) para reagir rapido caso o
+   // preco passe do Stop e a corretora nao tenha fechado a posicao
+   if(HasOpenPositions())
+      ManageOpenPositions();
 
    if(!IsNewBar()) return;
 

@@ -120,6 +120,26 @@ desenhar, **envia ordens reais** quando o sinal é confirmado.
 Os demais parâmetros (estrutura, Fibonacci/OTE, Order Block, visual,
 alertas) têm o mesmo significado do indicador `ICT_FiboEntry.mq5`.
 
+## Contas NETTING (posição única por símbolo)
+
+Algumas corretoras/símbolos operam em modo **netting** ou **exchange**
+(só existe 1 posição por símbolo — várias ordens no mesmo símbolo se
+fundem automaticamente numa única posição, e a última chamada
+sobrescreve o SL/TP das anteriores). Nesse modo, abrir "3 pernas"
+separadas quebraria a lógica de TP1/TP2/TP3 (o TP final ficaria sendo
+só o da última chamada). Por isso, o EA detecta o modo da conta no
+`OnInit()` (`ACCOUNT_MARGIN_MODE`) e, se não for **hedging**, usa
+automaticamente **1 única entrada por sinal**, com o alvo intermediário
+TP2 — a mensagem "conta em modo NETTING/EXCHANGE detectada" aparece no
+log (aba **Experts**) quando isso acontece.
+
+Além disso, o EA verifica a cada tick se o preço já ultrapassou o Stop
+de alguma posição própria que continua aberta (o que não deveria
+acontecer, mas serve de rede de segurança contra falha de execução da
+corretora) e fecha a posição manualmente nesse caso — evitando que o
+robô fique travado indefinidamente numa operação que nunca fecha
+sozinha.
+
 ## Observações importantes (leia antes de usar em conta real)
 
 - **Sempre valide primeiro no Strategy Tester** (modo "Visual" e depois
