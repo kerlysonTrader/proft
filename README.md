@@ -62,3 +62,79 @@ suas imagens de referência:
   investimento. Faça backtest e forward test em conta demo antes de
   usar em conta real, e ajuste os parâmetros ao ativo/timeframe
   operado.
+
+---
+
+# ICT Fibo Entry EA — versão robô (Expert Advisor)
+
+`MQL5/Experts/ICT_FiboEntry_EA.mq5` usa a **mesma lógica de estrutura,
+Fibonacci/OTE e Order Block** do indicador acima, mas em vez de apenas
+desenhar, **envia ordens reais** quando o sinal é confirmado.
+
+## O que o EA faz ao confirmar um sinal
+
+1. Calcula o **lote total** para arriscar `InpRiskPercent`% do saldo da
+   conta, com base na distância entre a entrada (preço de mercado no
+   momento do sinal) e o Stop Loss.
+2. Divide esse lote em **até 3 posições simultâneas** (mesmo SL, um TP
+   diferente cada — TP1/TP2/TP3), cada uma enviada e gerenciada pelo
+   próprio servidor da corretora (funciona mesmo se o terminal cair
+   depois de aberta).
+3. Se o lote mínimo do símbolo não permitir dividir em 3, o EA reduz
+   automaticamente para 2 pernas (TP1/TP2) e, em último caso, para 1
+   perna só (usando o alvo intermediário TP2). Se nem 1 lote mínimo
+   couber dentro do risco definido, **a entrada é ignorada** (log no
+   terminal) — o EA nunca infla o lote além do risco configurado só
+   para conseguir operar.
+4. Desenha no gráfico a ENTRADA, o STOP e os alvos realmente enviados —
+   essas linhas só somem quando as posições dessa entrada forem
+   fechadas (por SL, TP ou manualmente), diferente das linhas de
+   busca (Fibo/OTE/OB), que são redesenhadas a cada nova perna.
+
+## Instalação
+
+1. Copie `MQL5/Experts/ICT_FiboEntry_EA.mq5` para `MQL5/Experts` do seu
+   terminal MT5.
+2. Compile no MetaEditor (F7).
+3. Arraste **ICT_FiboEntry_EA** para o gráfico do ativo/timeframe
+   desejado.
+4. Habilite o **Auto Trading** no terminal (botão no topo do MT5) e
+   confirme "Permitir negociação automatizada" nas propriedades do EA.
+
+## Parâmetros específicos do EA
+
+| Grupo | Parâmetro | Descrição |
+|---|---|---|
+| Risco/Execução | `InpEnableTrading` | Se `false`, o EA só desenha e envia `Alert()`/`Print()`, sem enviar ordens — útil para observar os sinais antes de ligar a execução real. |
+| Risco/Execução | `InpRiskPercent` | % do **saldo** arriscado por sinal, dividido entre as pernas efetivamente abertas. |
+| Risco/Execução | `InpMagicNumber` | Identifica as ordens deste EA (não misturar com outros EAs/robôs no mesmo símbolo). |
+| Risco/Execução | `InpSlippagePoints` | Desvio máximo de preço aceito no preenchimento da ordem. |
+| Risco/Execução | `InpMaxSpreadPoints` | Se maior que 0, ignora sinais quando o spread do símbolo estiver acima desse valor (proteção contra spread alto em notícias/abertura de mercado). |
+| Risco/Execução | `InpOneSetupAtATime` | Se `true` (recomendado), não abre um novo conjunto de ordens enquanto houver posições abertas deste EA no símbolo. |
+
+Os demais parâmetros (estrutura, Fibonacci/OTE, Order Block, visual,
+alertas) têm o mesmo significado do indicador `ICT_FiboEntry.mq5`.
+
+## Observações importantes (leia antes de usar em conta real)
+
+- **Sempre valide primeiro no Strategy Tester** (modo "Visual" e depois
+  otimização/backtest normal) e depois em **conta demo**, no
+  ativo/timeframe que pretende operar, antes de qualquer conta real.
+- Se a entrada não for executada no momento do sinal (spread acima do
+  limite, já existe posição aberta, ou lote calculado abaixo do mínimo
+  do símbolo), o EA **não tenta novamente** na mesma perna — ele
+  aguarda a formação de uma nova perna de estrutura. Isso evita sinais
+  duplicados, mas significa que um filtro momentâneo pode custar uma
+  entrada.
+- O EA **não fecha posições automaticamente** se a estrutura for
+  invalidada depois da entrada (rompimento além da origem da perna) —
+  a proteção nesse cenário é o próprio Stop Loss já enviado à
+  corretora. Fechamento antecipado por invalidação de estrutura não
+  está implementado nesta versão.
+- `InpRiskPercent` é aplicado sobre o **saldo atual** a cada sinal (não
+  sobre o saldo inicial), então o tamanho da posição se ajusta conforme
+  a conta cresce ou diminui.
+- Esta é uma ferramenta educacional de automação de uma estratégia
+  discricionária; não constitui recomendação de investimento. Ajuste
+  todos os parâmetros de risco à sua realidade e opere sempre com
+  capital que pode perder.
