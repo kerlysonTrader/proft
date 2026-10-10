@@ -345,6 +345,12 @@ Pontos importantes:
 - **Stop curto + 1% de risco = lote grande** (em M1, mediana de ~1,3 lote em
   conta de US$ 10 mil). Comece com risco menor (0,25–0,5%) ou lote fixo e
   confira se a margem comporta.
+- **Reinício com posição aberta:** o EA recupera as posições e usa como nível
+  o stop que elas já têm no servidor (não rebaseia o stop de repente, nem ao
+  trocar de timeframe); o ajuste normal volta no próximo candle fechado. Em
+  conta hedging, depois de um reinício `InpMaxEntries` limita as posições
+  **abertas** (entradas já encerradas antes do reinício não contam). Em conta
+  NETTING o lado é tratado como cheio até zerar.
 - **Modo do testador:** use "Todos os ticks" ou "Ticks reais". Em "Somente
   preços de abertura" o EA só decide uma vez por candle, na abertura.
 - **Validação feita:** compilado contra um *mock* da API do MT5 e comparado

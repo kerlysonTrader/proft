@@ -70,6 +70,7 @@ double     g_trail[2];              // stop alvo em vigor (0 = sem posicoes)
 datetime   g_trailTime[2];          // vela a partir da qual a linha do stop e desenhada
 int        g_entries[2];            // entradas abertas nesse sentido desde que o lado estava zerado
 datetime   g_openTime[2];           // hora da ultima abertura (evita "falso encerramento" logo apos abrir)
+datetime   g_closeTime[2];          // hora do ultimo fechamento a mercado feito pelo EA (a lista de posicoes pode demorar a atualizar)
 
 bool       g_seeded      = false;       // estado inicial (posicoes ja abertas) recuperado
 bool       g_isNetting   = false;       // conta NETTING/EXCHANGE (1 posicao por simbolo)
@@ -292,6 +293,7 @@ void CloseSide(bool isBuy)
 
    if(closed > 0 && failed == 0)
      {
+      g_closeTime[Side(isBuy)] = TimeCurrent();
       string dir = isBuy ? "COMPRAS" : "VENDAS";
       Notify(_Symbol + " | Stop rompido - " + dir + " fechadas a mercado (" + IntegerToString(closed) + " posicao(oes))");
       ResetSide(isBuy);
@@ -546,7 +548,10 @@ void ManageStops(bool isBuy)
      }
    if(g_trail[s] <= 0.0)
      {
-      SeedSide(isBuy);                // posicao sem nivel (nao estava na lista ao anexar o EA): refaz agora
+      // posicao sem nivel (nao estava na lista ao anexar o EA): refaz agora. Logo apos o EA fechar o lado a lista
+      // de posicoes pode ainda mostrar a posicao ja fechada: nao a "ressuscita"
+      if(TimeCurrent() - g_closeTime[s] < 3) return;
+      SeedSide(isBuy);
       if(g_trail[s] <= 0.0) return;
      }
 
@@ -589,9 +594,8 @@ void ManageStops(bool isBuy)
 
       if(!trade.PositionModify(ticket, target, curTP))
         {
-         g_lastModFail = TimeCurrent();
+         g_lastModFail = TimeCurrent();    // backoff de 1 s por chamada; as demais posicoes seguem sendo tentadas
          Print("MA200_CandleTrail_EA: falha ao mover o stop da posicao #", ticket, " -> ", trade.ResultRetcodeDescription());
-         break;                       // uma falha por segundo, nao uma por posicao
         }
      }
   }
