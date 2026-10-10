@@ -163,3 +163,96 @@ sozinha.
   discricionária; não constitui recomendação de investimento. Ajuste
   todos os parâmetros de risco à sua realidade e opere sempre com
   capital que pode perder.
+
+---
+
+# DowStructure EA — estrutura de mercado (Teoria de Dow)
+
+`MQL5/Experts/DowStructure_EA.mq5` é um robô de **seguimento de tendência
+pela estrutura de topos e fundos**, no mesmo estilo dos EAs anteriores
+(risco por % do saldo, SL no servidor, objetos no gráfico, `Alert`).
+
+## Lógica
+
+| Etapa | Venda | Compra (espelho) |
+|---|---|---|
+| **Filtro** | último fechamento **abaixo** da média móvel (padrão 178) | último fechamento **acima** da média |
+| **Gatilho** | um **novo topo** é confirmado (fractal) | um **novo fundo** é confirmado (fractal) |
+| **Estrutura** | o novo topo é **menor** que o topo anterior (topos descendentes) | o novo fundo é **maior** que o fundo anterior (fundos ascendentes) |
+| **Entrada** | venda **a mercado** na hora em que o topo é confirmado | compra **a mercado** na hora em que o fundo é confirmado |
+| **Saída** | o mercado **rompe o último topo** (quebra da estrutura baixista) → fecha **todas** as vendas | o mercado **rompe o último fundo** → fecha **todas** as compras |
+
+Pontos importantes da implementação:
+
+- **Topo/fundo = fractal de `InpSwingBars` velas de cada lado.** Ele só é
+  confirmado depois que essas velas fecham, então nunca "repinta" — mas a
+  entrada sai `InpSwingBars` velas depois do topo/fundo (é o custo de
+  confirmar a estrutura).
+- **Acumula posições:** a cada novo topo mais baixo (venda) / novo fundo mais
+  alto (compra) abre mais uma entrada, até `InpMaxEntries` por sentido.
+- **O nível de saída acompanha a estrutura:** com vendas abertas, cada novo
+  topo mais baixo vira o novo nível de quebra (o stop desce junto, travando
+  lucro das entradas anteriores). Ele **nunca se afasta** do preço. O mesmo
+  vale, espelhado, para as compras.
+- **"Rompe" = fechamento da vela além do nível** (`InpBreakByClose = true`,
+  critério de Dow por fechamento). Com `false`, basta o preço tocar o nível
+  (checado a cada tick). `InpBOSBufferPoints` adiciona uma folga ao nível.
+- **Nunca opera contra posição aberta:** se o preço cruzar a média com vendas
+  ainda abertas, as compras só começam depois da quebra de estrutura.
+- **SL de emergência (servidor):** `nível da estrutura + InpHardSLATRMult × ATR`
+  (padrão 3×ATR), movido junto com o nível. Serve para gaps/picos e se o
+  terminal cair; a saída "normal" continua sendo a quebra de estrutura. Se
+  você diminuir muito esse múltiplo, ele passa a disparar antes do
+  fechamento da vela e a saída deixa de ser pela estrutura.
+- **Lote:** `InpRiskPercent`% do saldo **até o SL de emergência** (ou
+  `InpFixedLot`). Se nem o lote mínimo couber no risco, a entrada é ignorada.
+- **Contas NETTING/EXCHANGE:** as entradas se fundem numa posição só (o
+  volume acumula) e o EA aplica SL/fechamento sobre ela inteira — funciona
+  igual, só não há posições separadas.
+- **Reinício:** ao anexar o EA (ou reiniciar o terminal) ele **não** entra em
+  topos/fundos antigos; se já houver posições dele, o nível de saída é
+  reconstruído a partir do último topo/fundo confirmado.
+
+## Instalação
+
+1. Copie `MQL5/Experts/DowStructure_EA.mq5` para `MQL5/Experts` do terminal MT5.
+2. Compile no MetaEditor (F7).
+3. Arraste **DowStructure_EA** para o gráfico (ex.: XAUUSD M1) e habilite o
+   Auto Trading.
+4. No painel do gráfico (canto superior esquerdo) aparecem a tendência, os
+   últimos topos/fundos e o nível de saída em vigor.
+
+## Parâmetros
+
+| Grupo | Parâmetro | Descrição |
+|---|---|---|
+| Filtro | `InpMAPeriod` / `InpMAMethod` / `InpMAPrice` | Média móvel do filtro (padrão SMA 178 sobre o fechamento). |
+| Filtro | `InpMATimeframe` | Timeframe da média (`CURRENT` = o do gráfico; dá para usar, por exemplo, a média de 178 do M5 num gráfico M1). |
+| Estrutura | `InpSwingBars` | Velas de cada lado para confirmar topo/fundo. Menor = entra mais cedo, mais ruído; maior = estrutura mais "macro". |
+| Estrutura | `InpRequireStructure` | `true` = só vende em topo menor que o anterior / só compra em fundo maior que o anterior. `false` = qualquer topo/fundo a favor da média. |
+| Entradas | `InpAllowSell` / `InpAllowBuy` | Liga/desliga cada sentido. |
+| Entradas | `InpMaxEntries` | Máximo de entradas acumuladas por sentido (0 = sem limite). |
+| Saída | `InpBreakByClose` | `true` = vela fecha além do nível; `false` = preço toca o nível. |
+| Saída | `InpBOSBufferPoints` | Folga (pontos) além do topo/fundo para considerar a estrutura quebrada. |
+| Saída | `InpUseHardSL` / `InpHardSLATRMult` / `InpATRPeriod` | SL de emergência no servidor (ver acima). |
+| Risco | `InpEnableTrading` | `false` = só desenha e envia alerta (modo "ver os sinais" sem operar). |
+| Risco | `InpRiskPercent` / `InpFixedLot` | Risco por entrada em % do saldo, ou lote fixo. |
+| Risco | `InpMagicNumber`, `InpSlippagePoints`, `InpMaxSpreadPoints` | Como nos outros EAs. |
+
+## Observações
+
+- **Validação feita:** este ambiente não tem o MetaEditor, então o `.mq5` não
+  foi compilado aqui. A lógica foi exercitada compilando o próprio arquivo
+  contra um *mock* da API do MT5 em barras sintéticas e comparada com uma
+  implementação independente (mesmas entradas, saídas, lotes e SL em 30
+  cenários), mas isso **não substitui** compilar no MetaEditor e rodar o
+  **Strategy Tester** (modo visual) e uma conta **demo** no seu ativo/timeframe.
+- Em tendência forte o robô acumula várias posições no mesmo sentido; o risco
+  de cada entrada é calculado individualmente (até o SL de emergência), e o
+  nível de saída ao se aproximar do preço protege as anteriores. Em mercado
+  lateral/sem tendência (muitas quebras seguidas) o resultado tende a ser de
+  várias pequenas perdas — é a característica natural de um seguidor de
+  estrutura.
+- Esta é uma ferramenta educacional de automação de uma estratégia
+  discricionária; não constitui recomendação de investimento. Opere sempre
+  com capital que pode perder.
