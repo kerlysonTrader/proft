@@ -74,6 +74,7 @@ datetime   g_openTime[2];           // hora da ultima abertura (evita "falso enc
 bool       g_seeded      = false;       // estado inicial (posicoes ja abertas) recuperado
 bool       g_isNetting   = false;       // conta NETTING/EXCHANGE (1 posicao por simbolo)
 datetime   g_lastModFail = 0;           // hora da ultima falha de PositionModify (evita insistir a cada tick)
+datetime   g_lastCloseFail = 0;         // idem para PositionClose
 int        g_entrySeq    = 0;
 
 int        g_fastHandle  = INVALID_HANDLE;
@@ -145,12 +146,22 @@ bool IsNewBar()
    return(true);
   }
 
-// preco alinhado ao tick do simbolo (indices/cripto com tick maior que _Point)
-double NormalizePrice(double p)
+// preco de STOP alinhado ao tick do simbolo, sempre para o lado de FORA (compra: para baixo;
+// venda: para cima), assim o arredondamento nunca aproxima o stop do preco nem o joga para
+// dentro da zona proibida pelo servidor (indices/cripto com tick maior que _Point)
+double NormalizeStop(double p, bool isBuy)
   {
    double tick = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(tick > 0.0) p = MathRound(p / tick) * tick;
+   if(tick > 0.0)
+      p = isBuy ? MathFloor(p / tick + 1e-9) * tick : MathCeil(p / tick - 1e-9) * tick;
    return(NormalizeDouble(p, _Digits));
+  }
+
+// distancia a - b em PONTOS INTEIROS (o servidor compara stop level/freeze level assim, de forma inclusiva;
+// comparar em double deixa o ruido de ponto flutuante decidir na fronteira)
+double PtsDist(double a, double b)
+  {
+   return(MathRound((a - b) / _Point));
   }
 
 void Notify(string msg)
@@ -196,7 +207,8 @@ void DrawTrail(bool isBuy)
    ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, true);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
 
-   string txt = isBuy ? "STOP compra (minima anterior): " : "STOP venda (maxima anterior): ";
+   string txt = isBuy ? "STOP compra (minima anterior): " :
+                (InpSellStopAddSpread ? "STOP venda (maxima anterior + spread): " : "STOP venda (maxima anterior): ");
    ObjectCreate(0, tname, OBJ_TEXT, 0, g_trailTime[s], g_trail[s]);
    ObjectSetString(0, tname, OBJPROP_TEXT, txt + DoubleToString(g_trail[s], _Digits));
    ObjectSetInteger(0, tname, OBJPROP_COLOR, clr);
@@ -255,6 +267,8 @@ void ResetSide(bool isBuy)
 // ainda nao conseguiu receber o stop novo)
 void CloseSide(bool isBuy)
   {
+   if(g_lastCloseFail > 0 && TimeCurrent() - g_lastCloseFail < 1) return;   // apos uma falha, espera 1 s
+
    ENUM_POSITION_TYPE want = isBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
    int closed = 0, failed = 0;
 
@@ -271,6 +285,7 @@ void CloseSide(bool isBuy)
       else
         {
          failed++;
+         g_lastCloseFail = TimeCurrent();
          Print("MA200_CandleTrail_EA: falha ao fechar a posicao #", ticket, " -> ", trade.ResultRetcodeDescription());
         }
      }
@@ -316,7 +331,7 @@ bool GetTrailLevel(bool isBuy, double &level)
      {
       double lo = r[0].low;
       for(int i = 1; i < n; i++) lo = MathMin(lo, r[i].low);
-      level = NormalizePrice(lo - buf);
+      level = NormalizeStop(lo - buf, true);
      }
    else
      {
@@ -324,10 +339,15 @@ bool GetTrailLevel(bool isBuy, double &level)
       // faz o stop de venda tocar a maxima no grafico, espelhando o da compra
       double hi = r[0].high;
       for(int i = 1; i < n; i++) hi = MathMax(hi, r[i].high);
-      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      double spreadPrice = (InpSellStopAddSpread && bid > 0.0 && ask > bid) ? ask - bid : 0.0;
-      level = NormalizePrice(hi + buf + spreadPrice);
+      double spreadPrice = 0.0;
+      if(InpSellStopAddSpread)
+        {
+         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         if(bid <= 0.0 || ask <= 0.0) return(false);     // sem cotacao: mantem o alvo anterior
+         if(ask > bid) spreadPrice = ask - bid;
+        }
+      level = NormalizeStop(hi + buf + spreadPrice, false);
      }
    return(true);
   }
@@ -371,7 +391,7 @@ void TryEntry(bool isBuy, double trailLevel)
 
    if(isBuy ? !InpAllowBuy : !InpAllowSell) return;
    if(CountPositions(!isBuy) > 0) return;                       // nunca opera contra posicao aberta
-   if(InpMaxEntries > 0 && g_entries[s] >= InpMaxEntries) return; // ja ha entradas demais nesse sentido
+   if(InpMaxEntries > 0 && MathMax(g_entries[s], CountPositions(isBuy)) >= InpMaxEntries) return; // ja ha entradas demais nesse sentido
 
    if(InpMaxSpreadPoints > 0)
      {
@@ -413,11 +433,12 @@ void TryEntry(bool isBuy, double trailLevel)
 
    // o servidor recusa stop mais perto do preco que o nivel minimo; nesse caso
    // o stop inicial fica no minimo permitido e o EA o leva ate o nivel certo assim que possivel
-   double stopLevel = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+   double stopPts   = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double stopLevel = stopPts * _Point;
    double sl  = stopWanted;
    double pad = 2.0 * _Point;      // folga p/ o preco andar entre a leitura e o servidor receber a ordem
-   if(isBuy  && sl > bid - stopLevel) sl = NormalizePrice(bid - stopLevel - pad);
-   if(!isBuy && sl < ask + stopLevel) sl = NormalizePrice(ask + stopLevel + pad);
+   if(isBuy  && PtsDist(bid, sl) < stopPts) sl = NormalizeStop(bid - stopLevel - pad, true);
+   if(!isBuy && PtsDist(sl, ask) < stopPts) sl = NormalizeStop(ask + stopLevel + pad, false);
 
    // NETTING: a nova ordem se funde na posicao existente e o SL dela SUBSTITUI o da posicao;
    // nunca deixa esse SL ficar mais frouxo do que o que a posicao ja tinha
@@ -425,7 +446,15 @@ void TryEntry(bool isBuy, double trailLevel)
      {
       double cur = TightestSL(isBuy);
       if(cur > 0.0)
+        {
          sl = isBuy ? MathMax(sl, cur) : MathMin(sl, cur);
+         // o SL que a posicao ja tem pode estar colado no preco: o servidor recusaria a ordem
+         if(isBuy ? PtsDist(bid, sl) < stopPts : PtsDist(sl, ask) < stopPts)
+           {
+            Print("MA200_CandleTrail_EA: stop existente colado no preco (netting), ", dir, " ignorada");
+            return;
+           }
+        }
      }
 
    double dist   = MathMax(MathAbs(price - sl), MathMax(0.25 * atr, stopLevel));
@@ -477,6 +506,26 @@ void TryEntry(bool isBuy, double trailLevel)
    Notify(msg);
   }
 
+// Recupera o estado de um lado que ja tem posicoes abertas (EA anexado/reiniciado, ou posicao que ainda
+// nao estava na lista): numero de entradas e nivel do stop. O nivel recuperado e o stop que a posicao JA
+// tem no servidor, entao o stop nao e rebaseado de repente (ex.: troca de timeframe); a partir da
+// proxima vela fechada o ajuste normal assume.
+void SeedSide(bool isBuy)
+  {
+   int s = Side(isBuy);
+   int n = CountPositions(isBuy);
+   if(n == 0) return;
+
+   // em NETTING nao ha como saber quantas entradas ja foram fundidas: trata o lado como cheio
+   g_entries[s] = (g_isNetting && InpMaxEntries > 0) ? MathMax(n, InpMaxEntries) : MathMax(g_entries[s], n);
+
+   double lvl = TightestSL(isBuy);
+   if(lvl <= 0.0 && !GetTrailLevel(isBuy, lvl)) return;
+   g_trail[s]     = lvl;
+   g_trailTime[s] = iTime(_Symbol, _Period, 1);
+   DrawTrail(isBuy);
+  }
+
 // Roda a cada tick (barata quando nao ha posicao): leva o stop das posicoes ate o
 // nivel em vigor (so aproxima, nunca afasta) e, se o preco ja passou desse nivel
 // antes do servidor aceitar o stop, fecha a mercado
@@ -495,7 +544,11 @@ void ManageStops(bool isBuy)
         }
       return;
      }
-   if(g_trail[s] <= 0.0) return;      // reiniciou com posicao aberta: o nivel e refeito na proxima vela
+   if(g_trail[s] <= 0.0)
+     {
+      SeedSide(isBuy);                // posicao sem nivel (nao estava na lista ao anexar o EA): refaz agora
+      if(g_trail[s] <= 0.0) return;
+     }
 
    double target = g_trail[s];
    double bid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -509,13 +562,13 @@ void ManageStops(bool isBuy)
      }
 
    // stop colado demais no preco para o servidor: espera o preco se afastar
-   double stopLevel = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
-   if(isBuy  && target > bid - stopLevel) return;
-   if(!isBuy && target < ask + stopLevel) return;
+   double stopPts = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   if(isBuy  && PtsDist(bid, target) < stopPts) return;
+   if(!isBuy && PtsDist(target, ask) < stopPts) return;
 
    if(g_lastModFail > 0 && TimeCurrent() - g_lastModFail < 1) return;   // apos uma falha, espera 1 s
 
-   double freeze = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL) * _Point;
+   double freezePts = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL);
    ENUM_POSITION_TYPE want = isBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
      {
@@ -532,12 +585,13 @@ void ManageStops(bool isBuy)
       if(!closer) continue;
 
       // nivel de congelamento: o servidor nao deixa mexer no stop quando o preco esta colado nele
-      if(curSL > 0.0 && (isBuy ? (bid - curSL) <= freeze : (curSL - ask) <= freeze)) continue;
+      if(curSL > 0.0 && (isBuy ? PtsDist(bid, curSL) <= freezePts : PtsDist(curSL, ask) <= freezePts)) continue;
 
       if(!trade.PositionModify(ticket, target, curTP))
         {
          g_lastModFail = TimeCurrent();
          Print("MA200_CandleTrail_EA: falha ao mover o stop da posicao #", ticket, " -> ", trade.ResultRetcodeDescription());
+         break;                       // uma falha por segundo, nao uma por posicao
         }
      }
   }
@@ -617,21 +671,8 @@ bool SeedState()
    if(t0 == 0) return(false);                       // serie ainda nao sincronizada: tenta no proximo tick
 
    g_lastBarTime = t0;
-   for(int s = 0; s < 2; s++)
-     {
-      bool isBuy = (s == 1);
-      int  n     = CountPositions(isBuy);
-      if(n == 0) continue;
-
-      g_entries[s] = n;
-      double lvl;
-      if(GetTrailLevel(isBuy, lvl))
-        {
-         g_trail[s]     = lvl;
-         g_trailTime[s] = iTime(_Symbol, _Period, 1);
-         DrawTrail(isBuy);
-        }
-     }
+   SeedSide(false);
+   SeedSide(true);
    g_seeded = true;
    return(true);
   }
