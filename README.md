@@ -256,3 +256,101 @@ Pontos importantes da implementação:
 - Esta é uma ferramenta educacional de automação de uma estratégia
   discricionária; não constitui recomendação de investimento. Opere sempre
   com capital que pode perder.
+
+---
+
+# MA200 Candle Trail EA — continuação de tendência, sem alvo
+
+`MQL5/Experts/MA200_CandleTrail_EA.mq5` é um robô de **continuação de
+tendência**: a média lenta (EMA 200) dá o sentimento, a média rápida (EMA 20)
+confirma o candle, e **não há alvo** — o stop acompanha a mínima/máxima do
+candle anterior para aproveitar o máximo do movimento.
+
+## Lógica
+
+| Etapa | Compra | Venda (espelho) |
+|---|---|---|
+| **Sentimento** | candle fecha **acima** da EMA 200 | candle fecha **abaixo** da EMA 200 |
+| **Gatilho** | candle de **alta** que fecha **acima das duas** médias (EMA 20 e EMA 200) | candle de **baixa** que fecha **abaixo das duas** |
+| **Entrada** | compra **a mercado** na abertura do candle seguinte | venda **a mercado** na abertura do candle seguinte |
+| **Alvo** | nenhum | nenhum |
+| **Stop inicial** | **mínima** do candle anterior (o candle do sinal) | **máxima** do candle anterior (+ spread, ver abaixo) |
+| **Stop depois** | a cada candle novo vai para a mínima do candle que acabou de fechar; **só sobe** | a cada candle novo vai para a máxima do candle que acabou de fechar; **só desce** |
+
+Pontos importantes:
+
+- **Médias exponenciais por padrão** (`InpMAMethod = MODE_EMA`), 200 e 20,
+  sobre o fechamento do timeframe do gráfico. Tipo e períodos são parâmetros.
+- **O stop nunca se afasta do preço.** Com `InpTrailCandles = 1` isso equivale
+  a "mínima do candle anterior": uma mínima menor que o stop vigente já teria
+  disparado o stop. Com `InpTrailCandles = N` o stop usa a menor mínima (maior
+  máxima) dos últimos N candles fechados, o que dá mais folga.
+- **O stop é enviado ao servidor** (ordem real, protege mesmo sem o terminal)
+  sempre que respeita a distância mínima da corretora (`stops level`) e o
+  *freeze level*. Se o novo nível ficar colado demais no preço, o EA espera; se
+  o preço o atravessar antes disso, o EA **fecha a mercado**.
+- **Venda e spread:** os candles são de Bid, mas o stop da venda dispara no
+  Ask. Com `InpSellStopAddSpread = true` (padrão) o EA soma o spread atual ao
+  stop da venda, para que ele toque a máxima no gráfico, espelhando o da
+  compra. Desligue para usar a máxima exata.
+- **Uma posição por vez** por padrão (`InpMaxEntries = 1`): enquanto houver
+  posição aberta num sentido, os novos sinais naquele sentido são ignorados;
+  quando o stop pega, o próximo candle que cumprir o gatilho reentra. Com
+  `InpMaxEntries > 1` o EA empilha uma entrada por sinal, todas com o mesmo
+  stop compartilhado.
+- **Nunca opera contra posição aberta:** se o preço cruzar a média com uma
+  posição ainda aberta, o sentido contrário só começa depois que ela sair.
+- **Lote:** `InpRiskPercent`% do saldo até o stop inicial (ou `InpFixedLot`).
+  Se nem o lote mínimo couber no risco, a entrada é ignorada.
+- **Contas NETTING/EXCHANGE:** as entradas se fundem numa posição só; o EA
+  nunca deixa o stop da posição ficar mais frouxo ao acrescentar volume.
+- **Reinício/troca de timeframe:** o EA recupera as posições abertas e **não**
+  entra no meio de um candle só por ter sido anexado; a próxima entrada é no
+  próximo candle.
+
+## Instalação
+
+1. Baixe `MQL5/Experts/MA200_CandleTrail_EA.mq5` (use o arquivo, não copie e
+   cole o texto) e salve em `MQL5/Experts` do terminal MT5.
+2. Compile no MetaEditor (F7) e arraste **MA200_CandleTrail_EA** para o gráfico.
+3. Habilite o Auto Trading. O painel no canto do gráfico mostra o sentimento,
+   os valores das médias, as posições e o stop em vigor.
+
+## Parâmetros
+
+| Grupo | Parâmetro | Descrição |
+|---|---|---|
+| Médias | `InpSlowMAPeriod` / `InpFastMAPeriod` | Média lenta (sentimento, padrão 200) e rápida (padrão 20). |
+| Médias | `InpMAMethod` / `InpMAPrice` | Tipo (padrão exponencial) e preço aplicado. |
+| Entradas | `InpAllowBuy` / `InpAllowSell` | Liga/desliga cada sentido. |
+| Entradas | `InpMaxEntries` | Entradas abertas ao mesmo tempo por sentido (1 = uma por vez; 0 = sem limite). |
+| Stop | `InpTrailCandles` | Stop na mínima/máxima dos últimos N candles fechados (1 = candle anterior). |
+| Stop | `InpSLBufferPoints` | Folga em pontos além dessa mínima/máxima. |
+| Stop | `InpSellStopAddSpread` | Soma o spread ao stop da venda (padrão ligado). |
+| Risco | `InpRiskPercent` / `InpFixedLot` | Risco por entrada em % do saldo, ou lote fixo. |
+| Risco | `InpMaxSpreadPoints` | Se > 0, ignora entradas com spread acima disso. |
+| Risco | `InpEnableTrading` | `false` = só desenha/alerta (alerta em todo candle que cumpre o gatilho, mesmo os que não abririam por já haver posição). |
+| Risco | `InpMagicNumber`, `InpSlippagePoints` | Como nos outros EAs (desvio padrão menor: 10 pontos, porque o stop é curto). |
+| Visual | `InpDrawObjects`, `InpShowPanel`, `InpAlertOnTrade`, `InpPushNotification` | Setas/linha do stop, painel e alertas (alerta desligado por padrão: gera muitos avisos em M1). |
+
+## Observações (leia antes de testar)
+
+- **Em M1 de ouro o stop é curto e o custo do spread pesa muito.** Em testes
+  com dados *sintéticos* (que **não** provam lucratividade, só mostram a
+  mecânica) o stop mediano ficou em torno de 1 ATR (~4 spreads) e o custo de
+  spread por operação em torno de 0,3R, com ~22% das velas virando operação.
+  Isso cai para ~0,15R em M5 e ~0,08R em M15. Para reduzir custo: testar M5/M15,
+  usar `InpMaxSpreadPoints`, `InpSLBufferPoints` maior que o spread e/ou
+  `InpTrailCandles` 2–3.
+- **Stop curto + 1% de risco = lote grande** (em M1, mediana de ~1,3 lote em
+  conta de US$ 10 mil). Comece com risco menor (0,25–0,5%) ou lote fixo e
+  confira se a margem comporta.
+- **Modo do testador:** use "Todos os ticks" ou "Ticks reais". Em "Somente
+  preços de abertura" o EA só decide uma vez por candle, na abertura.
+- **Validação feita:** compilado contra um *mock* da API do MT5 e comparado
+  com um modelo de referência independente e com testes de invariantes em
+  milhares de cenários sintéticos; **não substitui** compilar no MetaEditor e
+  rodar o Strategy Tester (modo visual) e uma conta demo no seu ativo.
+- Esta é uma ferramenta educacional de automação de uma estratégia
+  discricionária; não constitui recomendação de investimento. Opere sempre
+  com capital que pode perder.

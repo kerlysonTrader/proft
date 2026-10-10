@@ -14,7 +14,10 @@
 //|  SAIDA      : nao ha alvo. O stop fica na MINIMA (compra) ou     |
 //|               MAXIMA (venda) do candle anterior e e reposicionado|
 //|               a cada candle novo. Ele so se aproxima do preco,   |
-//|               nunca se afasta. O stop e real (no servidor).      |
+//|               nunca se afasta. O stop vai ao servidor assim que  |
+//|               respeita a distancia minima da corretora; ate la   |
+//|               (ou se o preco o atravessar antes) o EA fecha a    |
+//|               mercado.                                           |
 //|                                                                  |
 //| Uso por conta e risco do usuario. Nao constitui recomendacao de  |
 //| investimento. Teste sempre em conta demo/Strategy Tester antes   |
@@ -42,6 +45,7 @@ input int    InpMaxEntries       = 1;      // Entradas abertas ao mesmo tempo po
 input group "== Stop inteligente (sem alvo) =="
 input int    InpTrailCandles     = 1;      // Stop na minima (compra) / maxima (venda) das ultimas N velas FECHADAS (1 = vela anterior)
 input int    InpSLBufferPoints   = 0;      // Folga (pontos) alem dessa minima/maxima
+input bool   InpSellStopAddSpread = true;  // Venda: soma o spread ao stop (o stop de venda dispara no ASK; assim fica simetrico ao da compra)
 input int    InpATRPeriod        = 14;     // ATR: usado so como piso da distancia do stop no calculo do lote
 
 input group "== Risco / Execucao =="
@@ -49,7 +53,7 @@ input bool   InpEnableTrading    = true;   // false = so desenha/alerta, nao env
 input double InpRiskPercent      = 1.0;    // % do saldo arriscado por entrada (ate o stop inicial)
 input double InpFixedLot         = 0.0;    // > 0 = lote fixo por entrada (ignora o % de risco)
 input int    InpMagicNumber      = 20261011;
-input int    InpSlippagePoints   = 30;     // Desvio maximo permitido no preenchimento (pontos)
+input int    InpSlippagePoints   = 10;     // Desvio maximo permitido no preenchimento (pontos); o stop e curto, nao aceite muito
 input int    InpMaxSpreadPoints  = 0;      // 0 = nao filtra; caso contrario ignora entradas com spread acima disso
 
 input group "== Visual / Alertas =="
@@ -57,7 +61,7 @@ input color  InpColorBuy         = clrDodgerBlue;
 input color  InpColorSell        = clrOrangeRed;
 input bool   InpDrawObjects      = true;   // Desenha entradas e a linha do stop no grafico
 input bool   InpShowPanel        = true;   // Mostra o resumo do estado no canto do grafico
-input bool   InpAlertOnTrade     = true;   // Alert() a cada entrada/encerramento
+input bool   InpAlertOnTrade     = false;  // Alert() a cada entrada/encerramento (gera muitos alertas em M1)
 input bool   InpPushNotification = false;  // Notificacao push a cada entrada/encerramento
 
 //================= ESTADO ======================================
@@ -66,6 +70,11 @@ double     g_trail[2];              // stop alvo em vigor (0 = sem posicoes)
 datetime   g_trailTime[2];          // vela a partir da qual a linha do stop e desenhada
 int        g_entries[2];            // entradas abertas nesse sentido desde que o lado estava zerado
 datetime   g_openTime[2];           // hora da ultima abertura (evita "falso encerramento" logo apos abrir)
+
+bool       g_seeded      = false;       // estado inicial (posicoes ja abertas) recuperado
+bool       g_isNetting   = false;       // conta NETTING/EXCHANGE (1 posicao por simbolo)
+datetime   g_lastModFail = 0;           // hora da ultima falha de PositionModify (evita insistir a cada tick)
+int        g_entrySeq    = 0;
 
 int        g_fastHandle  = INVALID_HANDLE;
 int        g_slowHandle  = INVALID_HANDLE;
@@ -99,7 +108,8 @@ int OnInit()
    // (o volume apenas acumula). A logica funciona igual: o stop e aplicado
    // sobre a posicao inteira
    ENUM_ACCOUNT_MARGIN_MODE marginMode = (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
-   if(marginMode != ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
+   g_isNetting = (marginMode != ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
+   if(g_isNetting)
       Print("MA200_CandleTrail_EA: conta NETTING/EXCHANGE detectada - as entradas serao somadas numa unica posicao");
 
    return(INIT_SUCCEEDED);
@@ -130,9 +140,17 @@ double GetATR()
 bool IsNewBar()
   {
    datetime t = iTime(_Symbol, _Period, 0);
-   if(t == g_lastBarTime) return(false);
+   if(t == 0 || t == g_lastBarTime) return(false);     // 0 = serie ainda nao sincronizada
    g_lastBarTime = t;
    return(true);
+  }
+
+// preco alinhado ao tick do simbolo (indices/cripto com tick maior que _Point)
+double NormalizePrice(double p)
+  {
+   double tick = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tick > 0.0) p = MathRound(p / tick) * tick;
+   return(NormalizeDouble(p, _Digits));
   }
 
 void Notify(string msg)
@@ -146,7 +164,8 @@ void Notify(string msg)
 void DrawEntry(bool isBuy, double price)
   {
    if(!InpDrawObjects) return;
-   string name = g_prefix + "ENT_" + IntegerToString((long)TimeCurrent()) + (isBuy ? "_B" : "_S");
+   string name = g_prefix + "ENT_" + IntegerToString(g_entrySeq % 300);   // buffer circular: nunca passa de 300 setas
+   g_entrySeq++;
    ObjectDelete(0, name);
    ObjectCreate(0, name, isBuy ? OBJ_ARROW_BUY : OBJ_ARROW_SELL, 0, TimeCurrent(), price);
    ObjectSetInteger(0, name, OBJPROP_COLOR, isBuy ? InpColorBuy : InpColorSell);
@@ -201,6 +220,25 @@ int CountPositions(bool isBuy)
       n++;
      }
    return(n);
+  }
+
+// stop mais apertado entre as posicoes do lado (0 = nenhuma tem stop)
+double TightestSL(bool isBuy)
+  {
+   ENUM_POSITION_TYPE want = isBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+   double best = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      string sym = PositionGetSymbol(i);
+      if(sym != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != want) continue;
+
+      double cur = PositionGetDouble(POSITION_SL);
+      if(cur <= 0.0) continue;
+      if(best <= 0.0 || (isBuy ? cur > best : cur < best)) best = cur;
+     }
+   return(best);
   }
 
 void ResetSide(bool isBuy)
@@ -278,13 +316,18 @@ bool GetTrailLevel(bool isBuy, double &level)
      {
       double lo = r[0].low;
       for(int i = 1; i < n; i++) lo = MathMin(lo, r[i].low);
-      level = NormalizeDouble(lo - buf, _Digits);
+      level = NormalizePrice(lo - buf);
      }
    else
      {
+      // as velas sao de BID, mas o stop de venda dispara no ASK: somar o spread
+      // faz o stop de venda tocar a maxima no grafico, espelhando o da compra
       double hi = r[0].high;
       for(int i = 1; i < n; i++) hi = MathMax(hi, r[i].high);
-      level = NormalizeDouble(hi + buf, _Digits);
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double spreadPrice = (InpSellStopAddSpread && bid > 0.0 && ask > bid) ? ask - bid : 0.0;
+      level = NormalizePrice(hi + buf + spreadPrice);
      }
    return(true);
   }
@@ -308,7 +351,8 @@ double CalcRiskLot(double slDistance)
   {
    if(slDistance <= 0.0) return(0.0);
 
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);   // valor do tick numa PERDA
+   if(tickValue <= 0.0) tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    if(tickSize <= 0.0 || tickValue <= 0.0) return(0.0);
 
@@ -341,6 +385,11 @@ void TryEntry(bool isBuy, double trailLevel)
 
    double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(bid <= 0.0 || ask <= 0.0)
+     {
+      Print("MA200_CandleTrail_EA: sem cotacao (bid/ask), ", dir, " ignorada");
+      return;
+     }
    double price = isBuy ? ask : bid;
 
    // com posicoes ja abertas, as novas entradas usam o mesmo stop (o mais apertado ate agora)
@@ -365,9 +414,19 @@ void TryEntry(bool isBuy, double trailLevel)
    // o servidor recusa stop mais perto do preco que o nivel minimo; nesse caso
    // o stop inicial fica no minimo permitido e o EA o leva ate o nivel certo assim que possivel
    double stopLevel = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
-   double sl = stopWanted;
-   if(isBuy  && sl > bid - stopLevel) sl = NormalizeDouble(bid - stopLevel, _Digits);
-   if(!isBuy && sl < ask + stopLevel) sl = NormalizeDouble(ask + stopLevel, _Digits);
+   double sl  = stopWanted;
+   double pad = 2.0 * _Point;      // folga p/ o preco andar entre a leitura e o servidor receber a ordem
+   if(isBuy  && sl > bid - stopLevel) sl = NormalizePrice(bid - stopLevel - pad);
+   if(!isBuy && sl < ask + stopLevel) sl = NormalizePrice(ask + stopLevel + pad);
+
+   // NETTING: a nova ordem se funde na posicao existente e o SL dela SUBSTITUI o da posicao;
+   // nunca deixa esse SL ficar mais frouxo do que o que a posicao ja tinha
+   if(g_isNetting && CountPositions(isBuy) > 0)
+     {
+      double cur = TightestSL(isBuy);
+      if(cur > 0.0)
+         sl = isBuy ? MathMax(sl, cur) : MathMin(sl, cur);
+     }
 
    double dist   = MathMax(MathAbs(price - sl), MathMax(0.25 * atr, stopLevel));
    double lot    = (InpFixedLot > 0.0) ? FloorLotToStep(InpFixedLot) : CalcRiskLot(dist);
@@ -441,6 +500,7 @@ void ManageStops(bool isBuy)
    double target = g_trail[s];
    double bid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask    = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   if(bid <= 0.0 || ask <= 0.0) return;            // sem cotacao: nao decide nada
 
    if(isBuy ? (bid <= target) : (ask >= target))
      {
@@ -453,6 +513,9 @@ void ManageStops(bool isBuy)
    if(isBuy  && target > bid - stopLevel) return;
    if(!isBuy && target < ask + stopLevel) return;
 
+   if(g_lastModFail > 0 && TimeCurrent() - g_lastModFail < 1) return;   // apos uma falha, espera 1 s
+
+   double freeze = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL) * _Point;
    ENUM_POSITION_TYPE want = isBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
      {
@@ -468,8 +531,14 @@ void ManageStops(bool isBuy)
       bool   closer = (curSL <= 0.0) || (isBuy ? target > curSL + half : target < curSL - half);
       if(!closer) continue;
 
+      // nivel de congelamento: o servidor nao deixa mexer no stop quando o preco esta colado nele
+      if(curSL > 0.0 && (isBuy ? (bid - curSL) <= freeze : (curSL - ask) <= freeze)) continue;
+
       if(!trade.PositionModify(ticket, target, curTP))
+        {
+         g_lastModFail = TimeCurrent();
          Print("MA200_CandleTrail_EA: falha ao mover o stop da posicao #", ticket, " -> ", trade.ResultRetcodeDescription());
+        }
      }
   }
 
@@ -521,7 +590,12 @@ void ProcessNewBar()
         }
      }
 
-   // 2) sinal de entrada na vela que acabou de fechar
+   // 2) aplica ja o stop novo (e fecha o lado cujo alvo o preco ja atravessou), para que
+   //    um sinal contrario nesta mesma vela nao seja bloqueado por uma posicao que acabou de ser encerrada
+   ManageStops(false);
+   ManageStops(true);
+
+   // 3) sinal de entrada na vela que acabou de fechar
    int sig = GetSignal();
    if(sig != 0)
      {
@@ -534,8 +608,38 @@ void ProcessNewBar()
    UpdatePanel();
   }
 
+// Primeiro contato com o grafico (ou reinicio/troca de timeframe/parametro): recupera o numero de
+// entradas e o nivel do stop de posicoes ja abertas e NAO trata a vela em andamento como "vela nova"
+// (o EA nao entra no meio de uma vela so porque foi anexado)
+bool SeedState()
+  {
+   datetime t0 = iTime(_Symbol, _Period, 0);
+   if(t0 == 0) return(false);                       // serie ainda nao sincronizada: tenta no proximo tick
+
+   g_lastBarTime = t0;
+   for(int s = 0; s < 2; s++)
+     {
+      bool isBuy = (s == 1);
+      int  n     = CountPositions(isBuy);
+      if(n == 0) continue;
+
+      g_entries[s] = n;
+      double lvl;
+      if(GetTrailLevel(isBuy, lvl))
+        {
+         g_trail[s]     = lvl;
+         g_trailTime[s] = iTime(_Symbol, _Period, 1);
+         DrawTrail(isBuy);
+        }
+     }
+   g_seeded = true;
+   return(true);
+  }
+
 void OnTick()
   {
+   if(!g_seeded && !SeedState()) return;
+
    ManageStops(false);
    ManageStops(true);
 
