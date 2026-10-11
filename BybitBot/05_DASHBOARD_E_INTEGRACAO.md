@@ -2,8 +2,9 @@
 
 ## O que é
 
-Um app web (feito no **Lovable**, banco **Supabase/Lovable Cloud**) para
-acompanhar o robô de qualquer lugar, inclusive no celular:
+Um app web (feito no **Lovable**, banco **Lovable Cloud/Supabase**) para
+acompanhar o robô de qualquer lugar, inclusive no celular. **Já está criado**
+no seu workspace Lovable com o nome "Bybit Trader View":
 
 | Página | O que mostra |
 |---|---|
@@ -25,15 +26,21 @@ Links do projeto (preenchidos após a criação):
   você mesmo logo após publicar. Outros cadastros não enxergam nada.
 - O navegador **não escreve** nada, exceto os comandos de pausar/retomar.
 - O painel **não tem chave da Bybit** e **não envia ordens**.
-- O robô escreve pela edge function `bot-ingest`, autenticada pelo header
-  `x-bot-token` (valor guardado como secret `BOT_INGEST_TOKEN` no Lovable
-  Cloud e no Google Secret Manager).
+- O robô escreve pelo endpoint `/api/public/bot-ingest` do próprio app,
+  autenticado pelo header `x-bot-token` (valor guardado como secret
+  `BOT_INGEST_TOKEN` no Lovable e no Google Secret Manager).
+- Verificado no banco: RLS ativo em todas as tabelas, leitura só para o dono
+  (`is_owner()`), e o navegador só pode inserir comandos `pause`/`resume`.
 
 ### Primeiros passos no painel
-1. Abra o editor Lovable e crie o secret `BOT_INGEST_TOKEN` (valor aleatório
-   longo, ex.: gerado com `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
-2. Publique o app e cadastre-se (você vira o dono).
-3. Em **Integração**, clique em **Carregar dados de demonstração** para ver o
+1. **Cadastre-se primeiro** pelo link de preview (a primeira conta vira a
+   dona; depois disso ninguém mais enxerga os dados) e confirme o e-mail.
+2. No editor Lovable, em **Project Settings → Secrets**, crie o secret
+   `BOT_INGEST_TOKEN` com um valor aleatório longo (ex.:
+   `openssl rand -hex 32`). Guarde o mesmo valor no Google Secret Manager.
+3. Clique em **Publish** no Lovable. O endpoint do robô só funciona no app
+   publicado.
+4. Em **Integração**, clique em **Carregar dados de demonstração** para ver o
    painel funcionando. Quando o robô começar a enviar dados reais, clique em
    **Limpar dados de demonstração**.
 
@@ -42,7 +49,7 @@ Links do projeto (preenchidos após a criação):
 ## Contrato da API `bot-ingest`
 
 ```
-POST https://<projeto>.supabase.co/functions/v1/bot-ingest
+POST https://<seu-app>.lovable.app/api/public/bot-ingest
 Content-Type: application/json
 x-bot-token: <BOT_INGEST_TOKEN>
 
@@ -50,7 +57,8 @@ x-bot-token: <BOT_INGEST_TOKEN>
 ```
 
 Respostas: `200 {"ok": true, "id": "..."}` · `400` (JSON/campos inválidos) ·
-`401` (token inválido). A URL exata aparece na página **Integração** do painel.
+`401` (token inválido). A URL exata aparece na página **Integração** do painel
+depois de publicado.
 
 ### Tipos e exemplos de payload
 
@@ -60,7 +68,7 @@ Respostas: `200 {"ok": true, "id": "..."}` · `400` (JSON/campos inválidos) ·
   "mode": "paper", "version": "0.1.0", "market_regime": "risk_on",
   "btc_price": 64250.5, "equity_usdt": 1000.0, "free_usdt": 620.0,
   "open_positions": 2, "daily_pnl_usdt": 4.2, "daily_loss_limit_usdt": 30.0,
-  "weekly_drawdown_pct": 1.1, "weekly_dd_limit_pct": 6.0,
+  "weekly_drawdown_pct": 1.1, "weekly_dd_limit_pct": 6.0, "max_open_positions": 4,
   "kill_switch": false, "paused": false, "message": "ok"}}
 ```
 
@@ -124,7 +132,7 @@ Respostas: `200 {"ok": true, "id": "..."}` · `400` (JSON/campos inválidos) ·
    "data": {"endpoint": "/v5/market/kline"}}]}}
 ```
 
-**commands_pull** → retorna comandos pendentes do painel (`pause`/`resume`)
+**commands_pull**: retorna os comandos pendentes do painel (`pause`/`resume`)
 ```json
 {"type": "commands_pull", "payload": {}}
 ```

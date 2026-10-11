@@ -133,7 +133,7 @@ costs:
 
 dashboard:
   enabled: true
-  ingest_url: "https://<seu-projeto>.supabase.co/functions/v1/bot-ingest"   # token via Secret Manager: BOT_INGEST_TOKEN
+  ingest_url: "https://<seu-app>.lovable.app/api/public/bot-ingest"   # token via Secret Manager: BOT_INGEST_TOKEN
 
 telegram:
   enabled: true   # TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID via Secret Manager

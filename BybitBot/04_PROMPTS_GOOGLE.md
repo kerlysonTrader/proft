@@ -43,7 +43,7 @@ alavancagem). Ele deve:
    que pode apenas VETAR ou REDUZIR o risco de um trade.
 5. Executar com gestão de risco rígida, stop sempre no servidor da Bybit,
    saída parcial, breakeven e trailing.
-6. Enviar tudo para o meu painel (edge function `bot-ingest`) e alertas para
+6. Enviar tudo para o meu painel (endpoint `bot-ingest` do painel) e alertas para
    o Telegram.
 
 A especificação completa da estratégia está em `03_ESTRATEGIA.md`, os
