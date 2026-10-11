@@ -6,7 +6,7 @@ mode: paper            # paper (simulado interno) | demo (Bybit Demo Trading) | 
 timezone: America/Sao_Paulo
 
 bybit:
-  category: spot
+  category: spot                  # só spot: o código recusa qualquer outra categoria (derivativos ficam para uma fase futura)
   quote: USDT
   rest_url:
     live: https://api.bybit.com
@@ -14,6 +14,14 @@ bybit:
   ws_public_url: wss://stream.bybit.com/v5/public/spot
   recv_window_ms: 5000
   max_requests_per_second: 8      # limite próprio, abaixo do limite da Bybit
+  http_timeout_seconds: 10
+  max_retries: 4                  # novas tentativas em erros temporários (rede, 5xx, limite de requisições)
+  backoff_base_seconds: 0.5       # espera = base * 2^tentativa (com variação aleatória), até o máximo abaixo
+  backoff_max_seconds: 8
+  time_sync_minutes: 30           # ressincroniza o relógio com /v5/market/time
+
+logging:
+  level: INFO                     # DEBUG | INFO | WARNING | ERROR
 
 schedule:
   universe_and_score_minutes: 60  # scanner completo

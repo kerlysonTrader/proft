@@ -1,0 +1,20 @@
+# segredos e ambiente local
+.env
+.env.*
+!.env.example
+
+# dados e banco local
+*.db
+*.sqlite
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
