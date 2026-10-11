@@ -163,3 +163,13 @@ sozinha.
   discricionária; não constitui recomendação de investimento. Ajuste
   todos os parâmetros de risco à sua realidade e opere sempre com
   capital que pode perder.
+
+---
+
+# Robô Scanner Bybit + Google
+
+A pasta [`BybitBot/`](BybitBot/README.md) contém a estrutura completa
+(checklist, plano de execução, especificação da estratégia, prompts para o
+Gemini e integração com o painel de acompanhamento) para uma automação na
+Bybit que busca as moedas com maior probabilidade de alta e o melhor ponto de
+entrada, usando o Google (Gemini + Google Cloud) como robô.

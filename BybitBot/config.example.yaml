@@ -1,0 +1,139 @@
+# config.example.yaml — parâmetros do robô (copie para config/config.yaml)
+# NUNCA coloque chaves/segredos aqui: eles vêm do Google Secret Manager
+# (ou de variáveis de ambiente no desenvolvimento local).
+
+mode: paper            # paper (simulado interno) | demo (Bybit Demo Trading) | live (conta real)
+timezone: America/Sao_Paulo
+
+bybit:
+  category: spot
+  quote: USDT
+  rest_url:
+    live: https://api.bybit.com
+    demo: https://api-demo.bybit.com
+  ws_public_url: wss://stream.bybit.com/v5/public/spot
+  recv_window_ms: 5000
+  max_requests_per_second: 8      # limite próprio, abaixo do limite da Bybit
+
+schedule:
+  universe_and_score_minutes: 60  # scanner completo
+  entry_triggers_minutes: 15      # checagem de gatilhos na Watchlist A
+  position_management_minutes: 5  # trailing, stop de tempo, reconciliação
+  heartbeat_seconds: 60
+
+universe:
+  min_turnover_24h_usdt: 5000000
+  max_spread_pct: 0.15
+  min_bid_depth_2pct_usdt: 50000
+  min_daily_candles: 120
+  max_change_24h_pct: 25
+  min_change_24h_pct: -15
+  exclude_bases: [USDC, FDUSD, DAI, TUSD, USDE, PYUSD, EURC, WBTC, WETH, STETH]
+  exclude_suffixes: ["2L", "3L", "5L", "2S", "3S", "5S"]
+  blacklist: []
+
+regime:
+  btc_symbol: BTCUSDT
+  daily_ema: 200
+  h4_fast_ema: 50
+  h4_slow_ema: 200
+  min_breadth_pct: 30
+  circuit_breaker_btc_drop_24h_pct: 5
+  circuit_breaker_pause_hours: 12
+
+score:
+  watchlist_a_min: 70
+  watchlist_b_min: 60
+  neutral_regime_extra_min: 5
+  weights:            # máximos por componente (soma = 100)
+    trend: 25
+    relative_strength: 20
+    volume: 20
+    squeeze: 15
+    derivatives: 10
+    momentum: 10
+  volume_ratio_band: [1.3, 4.0]
+  pump_volume_ratio: 6.0
+  bb_width_percentile_max: 25
+  rsi_band_4h: [50, 68]
+  rsi_overbought_4h: 75
+  max_dist_from_ema20_4h_pct: 12
+  funding_ok_range_pct: [-0.01, 0.03]
+  funding_hot_pct: 0.05
+  max_long_short_ratio: 1.5
+  derivatives_neutral_points: 5
+
+setups:
+  enabled: [pullback_tendencia, rompimento_compressao, ote_fibo]
+  pullback_tendencia:
+    min_trend_points: 18
+    rsi_touch_band_1h: [35, 45]
+    order_valid_candles_1h: 2
+    stop_atr_buffer: 0.5
+  rompimento_compressao:
+    min_squeeze_points: 10
+    range_lookback_4h: 20
+    breakout_volume_ratio: 1.8
+    retest_offset_pct: 0.2
+    order_valid_candles_1h: 6
+    stop_atr_mult: 1.5
+  ote_fibo:
+    swing_bars: 5
+    min_leg_atr: 3.0
+    ote_start: 0.618
+    ote_end: 0.79
+    displacement_atr: 1.5
+  common:
+    min_rr_tp2: 2.0
+    min_stop_pct: 1.5
+    max_stop_pct: 8.0
+    reentry_cooldown_hours: 24
+
+gemini:
+  enabled: true
+  provider: vertex          # vertex (recomendado na VM, sem chave) | ai_studio (GEMINI_API_KEY)
+  model_screening: "<modelo Gemini Flash mais recente>"
+  model_final: "<modelo Gemini Pro mais recente>"
+  use_google_search_grounding: true
+  timeout_seconds: 45
+  cache_hours: 6
+  on_failure: cautela       # cautela | fail_closed
+  unlock_lookahead_days: 14
+
+risk:
+  risk_per_trade_pct: 1.0
+  neutral_regime_risk_factor: 0.5
+  caution_risk_factor: 0.5
+  max_open_positions: 4
+  max_open_positions_neutral: 2
+  max_exposure_per_coin_pct: 25
+  max_total_exposure_pct: 80
+  max_positions_per_sector: 2
+  daily_loss_limit_pct: 3
+  max_consecutive_losses: 3
+  consecutive_losses_pause_hours: 24
+  weekly_drawdown_limit_pct: 6
+  max_drawdown_from_peak_pct: 15
+
+exits:
+  tp1_r: 1.5
+  tp1_close_fraction: 0.5
+  move_stop_to_breakeven_after_tp1: true
+  mode_after_tp1: trailing   # trailing | fixed_tp2
+  tp2_r: 3.0
+  trailing_lookback_candles_1h: 3
+  trailing_atr_buffer: 0.5
+  time_stop_hours: 48
+  time_stop_min_r: 0.5
+  invalidation_close_below_ema50_4h: true
+
+costs:
+  fee_rate_per_side: 0.001
+  backtest_slippage_pct: 0.05
+
+dashboard:
+  enabled: true
+  ingest_url: "https://<seu-projeto>.supabase.co/functions/v1/bot-ingest"   # token via Secret Manager: BOT_INGEST_TOKEN
+
+telegram:
+  enabled: true   # TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID via Secret Manager
