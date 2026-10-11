@@ -31,7 +31,7 @@ Marque cada item conforme for concluindo. A ordem segue o
 
 ### Painel e alertas
 - [ ] Painel Lovable criado (ver [05_DASHBOARD_E_INTEGRACAO.md](05_DASHBOARD_E_INTEGRACAO.md)) e **você** cadastrado como primeiro usuário (dono).
-- [ ] Secret `BOT_INGEST_TOKEN` criado no Lovable (Project Settings → Secrets) (gere um valor aleatório longo) e o **mesmo** valor salvo no Google Secret Manager.
+- [ ] Token do robô gerado no painel (**Integração → Tokens do robô → Gerar token do robô**), guardado num gerenciador de senhas e depois no Google Secret Manager como `BOT_INGEST_TOKEN`.
 - [ ] Bot do **Telegram** criado no @BotFather + `chat_id` anotado (alertas no celular).
 
 ## B. Infraestrutura (Google Cloud)

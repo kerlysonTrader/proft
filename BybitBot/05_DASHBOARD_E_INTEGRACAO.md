@@ -29,20 +29,24 @@ Links do projeto:
 - O navegador **não escreve** nada, exceto os comandos de pausar/retomar.
 - O painel **não tem chave da Bybit** e **não envia ordens**.
 - O robô escreve pelo endpoint `/api/public/bot-ingest` do próprio app,
-  autenticado pelo header `x-bot-token` (valor guardado como secret
-  `BOT_INGEST_TOKEN` no Lovable e no Google Secret Manager).
+  autenticado pelo header `x-bot-token` com um token gerado em
+  **Integração → Tokens do robô** (o painel guarda só o hash; no robô o valor
+  fica no Google Secret Manager como `BOT_INGEST_TOKEN`).
 - Verificado no banco: RLS ativo em todas as tabelas, leitura só para o dono
   (`is_owner()`), e o navegador só pode inserir comandos `pause`/`resume`.
 
 ### Primeiros passos no painel
-1. **Cadastre-se primeiro** pelo link de preview (a primeira conta vira a
-   dona; depois disso ninguém mais enxerga os dados) e confirme o e-mail.
-2. No editor Lovable, em **Project Settings → Secrets**, crie o secret
-   `BOT_INGEST_TOKEN` com um valor aleatório longo (ex.:
-   `openssl rand -hex 32`). Guarde o mesmo valor no Google Secret Manager.
-3. Clique em **Publish** no Lovable. O endpoint do robô só funciona no app
-   publicado.
-4. Em **Integração**, clique em **Carregar dados de demonstração** para ver o
+1. **Cadastre-se** (feito: a conta do dono já existe; novos cadastros estão
+   desativados) e **troque a senha** se ela já foi compartilhada em algum lugar.
+2. Em **Integração → Tokens do robô**, clique em **Gerar token do robô**
+   (nome sugerido: "Robô Google Cloud"). O token (`bot_` + 64 caracteres) é
+   mostrado **uma única vez**: clique em **Copiar** e guarde num gerenciador de
+   senhas. Depois ele vai para o Google Secret Manager como `BOT_INGEST_TOKEN`.
+   - O painel guarda só o hash SHA-256 do token; dá para **revogar** e gerar
+     outro a qualquer momento (máx. 5 ativos).
+   - O secret `BOT_INGEST_TOKEN` na aba Cloud do Lovable continua aceito, mas
+     agora é **opcional**.
+3. Em **Integração**, clique em **Carregar dados de demonstração** para ver o
    painel funcionando. Quando o robô começar a enviar dados reais, clique em
    **Limpar dados de demonstração**.
 
