@@ -24,8 +24,8 @@ como robô: o **Gemini** escreve o código e atua como analista de risco, e o
 
 ## Onde acompanhar
 
-- **Painel (dashboard) em tempo real** — projeto Lovable:
-  https://lovable.dev/projects/2f34128e-4585-4e6d-9fa8-1a0c53ee3e9d
+- **Painel (dashboard) em tempo real**: https://bybit-trader-view.lovable.app
+  (editor: https://lovable.dev/projects/2f34128e-4585-4e6d-9fa8-1a0c53ee3e9d)
   (detalhes e primeiros passos em [05_DASHBOARD_E_INTEGRACAO.md](05_DASHBOARD_E_INTEGRACAO.md)).
 - **Central do projeto no Notion** (tarefas por fase, status e critérios de
   pronto): página privada "Robô Scanner Bybit + Google — Central do Projeto".

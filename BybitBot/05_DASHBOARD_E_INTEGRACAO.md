@@ -17,9 +17,11 @@ no seu workspace Lovable com o nome "Bybit Trader View":
 | **Logs** | Feed em tempo real dos logs do robô |
 | **Integração** | URL da API, exemplos de JSON, botões para carregar/limpar dados de demonstração |
 
-Links do projeto (preenchidos após a criação):
+Links do projeto:
+- **Painel publicado**: https://bybit-trader-view.lovable.app
+- **Endpoint do robô**: `https://bybit-trader-view.lovable.app/api/public/bot-ingest`
 - Editor Lovable: https://lovable.dev/projects/2f34128e-4585-4e6d-9fa8-1a0c53ee3e9d
-- Preview: https://id-preview--2f34128e-4585-4e6d-9fa8-1a0c53ee3e9d.lovable.app
+- Preview (versão de desenvolvimento): https://id-preview--2f34128e-4585-4e6d-9fa8-1a0c53ee3e9d.lovable.app
 
 ### Segurança do painel
 - Login obrigatório; o **primeiro usuário cadastrado vira o dono** — cadastre-se
@@ -49,7 +51,7 @@ Links do projeto (preenchidos após a criação):
 ## Contrato da API `bot-ingest`
 
 ```
-POST https://<seu-app>.lovable.app/api/public/bot-ingest
+POST https://bybit-trader-view.lovable.app/api/public/bot-ingest
 Content-Type: application/json
 x-bot-token: <BOT_INGEST_TOKEN>
 
