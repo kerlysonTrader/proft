@@ -58,9 +58,24 @@ x-bot-token: <BOT_INGEST_TOKEN>
 { "type": "<tipo>", "payload": { ... } }
 ```
 
-Respostas: `200 {"ok": true, "id": "..."}` · `400` (JSON/campos inválidos) ·
-`401` (token inválido). A URL exata aparece na página **Integração** do painel
-depois de publicado.
+Respostas:
+
+| Código | Significado | O que o robô faz |
+|---|---|---|
+| `200 {"ok": true, "id": "..."}` | Gravado (ou `noop: true` quando não havia nada a mudar) | Segue |
+| `400` | JSON, campos ou valores inválidos (inclui erros de validação do banco) | **Descarta** e registra log de erro (reenviar não adianta) |
+| `401` | Token inválido | Alerta crítico; não reenvia |
+| `409` com `reason: "not_found"` | Trade ainda não existe (ex.: `trade_event` ou `trade_update` sem `symbol` chegando antes do `trade_open`) | **Reenfileira** e tenta de novo depois |
+| `409` com `reason: "closed"` | Trade já fechado (só `trade_close` altera trade fechado) | **Descarta** |
+| `503` | Secret `BOT_INGEST_TOKEN` não configurado no painel | Alerta; reenfileira |
+| `500` | Erro inesperado/rede | Reenfileira com backoff |
+
+Regras de idempotência do endpoint:
+- `trade_open` repetido não sobrescreve nada; só preenche campos que ainda estavam vazios (útil se um `trade_update` com `symbol` chegou antes).
+- `trade_update` nunca altera trade fechado; `trade_close` é o único que fecha.
+- Comandos **pause nunca expiram**; `resume` com mais de 10 min expira (o painel mostra e o dono reenviar). O dono pode **cancelar** um comando pendente pelo painel.
+
+A URL exata aparece na página **Integração** do painel depois de publicado.
 
 ### Tipos e exemplos de payload
 
@@ -176,6 +191,8 @@ class DashboardClient:
                 pass
             time.sleep(2 ** attempt)
         return None  # o robô deve enfileirar localmente e reenviar depois
+        # Observação: trate 409 pelo campo "reason" (not_found = reenfileirar,
+        # closed = descartar) e 503 como reenfileirar; veja a tabela acima.
 
 
 # exemplo
