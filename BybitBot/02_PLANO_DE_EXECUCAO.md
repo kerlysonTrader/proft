@@ -18,6 +18,7 @@ F0 ─ F1 ─ F2 ─ F3 ─ F4 ─ F5(backtest) ─ F6 ─ F7 ─── F8 (pape
 | 4 | Gatilhos de entrada (3 setups) | 3–4 dias | Prompt Fase 4 |
 | 5 | Backtest + walk-forward | 5–7 dias | Prompt Fase 5 |
 | 6 | Risco, execução e analista Gemini | 4–5 dias | Prompt Fase 6 |
+| 6B | Camada on-chain (Coinversa) em modo sombra | 2–3 dias | Prompt Fase 6B |
 | 7 | Painel, alertas e deploy no Google Cloud | 2–3 dias | Prompt Fase 7 |
 | 8 | Forward test (paper → Bybit Demo) | 4–8 semanas | Prompt Fase 8 |
 | 9 | Conta real com capital pequeno | 4 semanas | — |
@@ -102,6 +103,18 @@ validado e regra de falha, comandos `pause/resume` do painel.
 - Kill switch e limite de perda diária bloqueiam novas entradas.
 - Gemini fora do ar / JSON inválido → comportamento de falha correto.
 
+## Fase 6B — Camada on-chain em modo sombra (opcional)
+**Entregáveis**: `OnchainProvider` (Coinversa/Replay/Null), regras S1, F2, F3,
+R2, R3 e R4 calculadas e **gravadas sem efeito**, exportação do histórico de
+coortes, gravação contínua de snapshots. Detalhes em
+[06_DADOS_ONCHAIN.md](06_DADOS_ONCHAIN.md).
+
+**Gate 6B**
+- Com `onchain.enabled=false` **e** com `mode=shadow`, o backtest gera
+  exatamente os mesmos trades da estratégia base.
+- Derrubar a Coinversa (chave inválida, timeout) não atrasa nem bloqueia
+  nada no robô.
+
 ## Fase 7 — Painel, alertas e deploy
 **Entregáveis**: Dockerfile, docker compose, script de setup da VM, leitura
 de segredos do Secret Manager, heartbeat, envio de todos os eventos ao painel,
@@ -116,6 +129,8 @@ alertas no Telegram, backup diário.
 
 **Gate 8**
 - ≥ 30 trades no demo; métricas dentro de ±30 % do backtest.
+- Camada on-chain continua em shadow; o contrafactual de cada regra é
+  revisado, e uma regra só é ativada se cumprir o critério pré-registrado.
 - Zero erros críticos de execução; zero posições sem stop no servidor.
 
 ## Fase 9 — Conta real com capital pequeno
@@ -154,3 +169,4 @@ Confira os preços atuais no console do Google Cloud — eles mudam.
 | IA "alucina" | Gemini só veta/reduz; JSON validado; fallback definido |
 | Bloqueio geográfico (403) | VM fora dos EUA, testado no Gate 0 |
 | Overfitting | Walk-forward, uma mudança por vez, forward test longo |
+| Dados on-chain enganosos ou fora do ar | Hyperliquid ≠ Bybit: camada opcional, só reduz risco, começa em shadow e é fail-open |

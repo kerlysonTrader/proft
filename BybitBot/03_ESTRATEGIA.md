@@ -206,3 +206,12 @@ Reaproveita a lógica de `MQL5/Experts/ICT_FiboEntry_EA.mq5`, só no lado compra
 Taxa de acerto, payoff, **expectância em R**, profit factor, drawdown máximo,
 tempo médio em posição, resultado por setup, por regime, por faixa de score e
 por veredito do Gemini (para saber se o veto realmente ajuda).
+
+## 10. Camada on-chain opcional (Hyperliquid via Coinversa) — modo sombra
+
+Especificação completa em [06_DADOS_ONCHAIN.md](06_DADOS_ONCHAIN.md). Resumo:
+
+- **Começa em `mode: shadow`**: calcula e grava, **sem mudar nenhuma decisão**, até cada regra provar valor (uma ativação por vez).
+- **Só reduz risco**: S1 (divergência lucrativos × multidão) tira no máx. **3 pontos** do score e nunca dá bônus; F2 (fragilidade da moeda) e F3 (cascata de liquidação na última hora) só vetam/pausam entradas; R2 (fragilidade do mercado) e R3 (divergência no BTC) só multiplicam o risco por 0,75.
+- **Fail-open**: sem a Coinversa (fora do ar, chave inválida, limite de plano, moeda sem perp na HL), o robô funciona **exatamente** como a estratégia base. Chamadas on-chain nunca entram no caminho de stop, trailing, reconciliação ou kill switch.
+- **Fora do prompt do Gemini**: o Gemini continua só com notícias e eventos, para que o efeito de cada camada continue mensurável.

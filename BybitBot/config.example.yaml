@@ -137,3 +137,136 @@ dashboard:
 
 telegram:
   enabled: true   # TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID via Secret Manager
+
+# ---------------------------------------------------------------------------
+# onchain — dados on-chain da Hyperliquid via Coinversa (OPCIONAL)
+# Hyperliquid NÃO é Bybit: são perpétuos da HL, usados só como proxy de
+# posicionamento e alavancagem. As regras só REDUZEM risco; dado ausente,
+# vencido ou abaixo do gate de qualidade = neutro (o robô segue igual à
+# estratégia base). A chave vem do Secret Manager, nunca deste arquivo.
+# ---------------------------------------------------------------------------
+onchain:
+  enabled: true                  # false = NullProvider (resultado idêntico à estratégia base)
+  provider: coinversa            # coinversa (REST ao vivo) | replay (snapshots gravados, backtest/paper) | null
+  mode: shadow                   # shadow = calcula e GRAVA, sem efeito na decisão | active = aplica rules_active
+  rules_active: []               # só vale com mode: active; ativar UMA por vez após validação: S1, F2, F3, R2, R3
+
+  # --- acesso à API (confirmar tudo em docs.coinversa.ai antes de codar) ---
+  base_url: "https://api.coinversa.ai/api/public/v1"
+  api_key_secret: COINVERSA_API_KEY   # nome do segredo no Secret Manager (formato cvsa_...)
+  auth_header: X-API-Key              # visto só no código do cliente oficial; confirmar na doc
+  http:
+    timeout_seconds: 4           # por chamada
+    scan_budget_seconds: 20      # teto de tempo on-chain por varredura horária
+    trigger_budget_seconds: 6    # teto de tempo on-chain por ciclo de gatilho (15 min)
+    max_retries: 0               # sem retry dentro do ciclo (o burst por chave é pequeno)
+    min_interval_ms: 250         # chamadas sequenciais e espaçadas
+    circuit_breaker:
+      failures_to_open: 3        # 3 falhas seguidas -> circuito aberto (NullProvider)
+      open_minutes: 15           # depois tenta 1 chamada de teste (half-open)
+    on_auth_error_disable_hours: 24   # 401/403: desliga on-chain, alerta, robô continua
+    respect_retry_after: true    # 429: respeita retryAfterSeconds e pula a moeda
+
+  # --- orçamento (abaixo do plano Free para sobreviver ao fim de um trial Pro) ---
+  budget:
+    max_calls_per_day: 800
+    max_calls_per_hour: 40
+    reserve_for_triggers_per_day: 150
+    priority: [risk_overview, market_overview, btc_cohort, candidate_cohort, candidate_risk, trigger_liq_summary, trigger_heatmap_log]
+
+  # --- cache e frescor ---
+  cache_ttl_minutes:
+    cohort_history: 90
+    risk_snapshot: 60
+    risk_overview: 120
+    market_overview: 60
+    liquidation_summary_1h: 15
+    heatmap: 15
+  max_data_age_minutes: 120      # asOf/generatedAt mais velho que isso = ausente (nunca usar dado vencido)
+  history_lag_hours: 1           # snapshot horário da hora h só vale a partir de h+1h (sem look-ahead)
+
+  # --- gravação própria (SEMPRE ligada, inclusive em shadow) ---
+  snapshot_log:
+    enabled: true                # heatmap, near-liq e alavancagem não têm histórico na API;
+    uri: "gs://<bucket>/onchain/"  # o histórico de coorte parece ser janela móvel de ~90 dias
+    async_write: true            # grava DEPOIS da decisão; nunca no caminho da ordem
+    export_cohort_history_on_start: true   # exporta o histórico disponível (janelas de até 30 d)
+
+  # --- mapeamento par Bybit spot -> coin da Hyperliquid ---
+  symbol_map:
+    auto_native: true            # BASE do par Bybit = coin nativo da HL (sem prefixo)
+    overrides:                   # prefixo k = 1000 unidades: preços da HL ÷ mult
+      PEPE: {hl: kPEPE, mult: 1000}
+      SHIB: {hl: kSHIB, mult: 1000}
+      BONK: {hl: kBONK, mult: 1000}
+      FLOKI: {hl: kFLOKI, mult: 1000}
+      LUNC: {hl: kLUNC, mult: 1000}
+    exclude_hl_patterns: [":", "#", "@"]   # builder dexes (ações/FX), HIP-4, spot interno HL
+    price_check_max_dev_pct: 2.0 # (markPx HL ÷ mult) vs lastPrice Bybit; fora disso = ausente
+    deny: []                     # colisões de ticker confirmadas (mesmo símbolo, ativo diferente)
+
+  # --- gates de qualidade/materialidade (falhou = ausente = neutro) ---
+  quality:
+    min_hl_oi_usd: 20000000      # OI da moeda na HL (market.totalOi)
+    smart_min_accounts: 50       # Apex + Sharps somados (accountCount)
+    smart_min_notional_usd: 20000000   # Apex + Sharps, long + short
+    crowd_min_accounts: 300      # The Crowd (accountCount)
+    crowd_min_notional_usd: 5000000
+    empty_tiers_is_missing: true # HTTP 200 com tiers [] = ausente, nunca "bias 0"
+
+  # --- S1 (+ S5): divergência smart money x multidão, SÓ PENALIDADE ---
+  score:
+    smart_tiers: [money_printer, smart_money]  # Apex + Sharps, somados por notional, SEM peso
+    crowd_tiers: [exit_liquidity]              # The Crowd
+    bias_from_notionals: true    # recalcular (L-S)/(L+S); netBias vem em % numa rota e fração em outra
+    sm_short_max: -0.25          # SM_pool <= -0,25
+    crowd_hot_min: 0.35          # e CROWD >= +0,35
+    persistence_hours: 4         # nas últimas 4 h fechadas...
+    persistence_min_hits: 3      # ...em pelo menos 3
+    penalty_points: -3
+    min_adj: -3
+    max_adj: 0                   # nunca bônus
+    can_promote: false           # em active só rebaixa (A->B, B->descartada)
+
+  # --- filtros de entrada ---
+  filter:
+    near_liq:                    # F2: veto exige AS DUAS condições
+      share_veto_pct: 15         # nearLiquidationNotional / market.totalOi >= 15 %
+      avg_liq_distance_max_pct: 5      # e avgLiquidationDistancePct <= 5 %
+      percentile_after_days: 30  # com >= 30 d de log: limiar = max(15 %, p99 da própria moeda)
+      percentile: 99
+    cascade:                     # F3: cascata de liquidação long em andamento
+      window: 1h
+      long_liq_pct_of_oi: 1.0    # longNotional(1h) >= 1,0 % do OI da moeda na HL
+      min_long_events: 20        # e >= 20 eventos long
+      pause_hours: 2             # sem nova entrada nessa moeda
+
+  # --- risco (fatores só <= 1,0; max_positions NÃO muda) ---
+  risk:
+    market_near_liq:             # R2: fragilidade do mercado HL inteiro
+      share_warn_pct: 8          # nearLiquidationNotional / totalOI (overview) >= 8 %
+      factor: 0.75
+      percentile_after_days: 30  # com >= 30 d de log: limiar = max(8 %, p95 do log)
+      percentile: 95
+    btc_inverse_divergence:      # R3: S1 aplicado ao BTC (mesmos limiares e gates de score.*)
+      factor: 0.75
+    combine: min                 # R4: fator_onchain = min(R2, R3)
+    min_onchain_factor: 0.75
+    min_total_risk_factor: 0.25  # produto dos fatores < 0,25 => NÃO entra (não é piso que aumenta risco)
+    on_unavailable_factor: 1.0   # ausência nunca reduz nem bloqueia
+
+  # --- regras derrubadas: só gravadas para estudo (sem efeito) ---
+  shadow_only:
+    log_heatmap_on_trigger: true # F1/ST1: contrafactual do stop abaixo do cluster
+    heatmap_range_pct: 10
+    heatmap_buckets: 30
+    log_sm_delta_24h: true       # S2
+    log_crowd_bias: true         # S3
+    log_coin_leverage: true      # S4 / R1
+
+  gemini:
+    include_in_prompt: false     # G1 derrubada: evita contagem dupla e mantém o veto do Gemini mensurável
+    show_in_dashboard: true      # bloco on-chain com asOf só no painel/Telegram
+
+  alerts:
+    telegram_max_per_hour: 1     # circuito aberto / recuperação / erro de autenticação

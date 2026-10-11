@@ -23,6 +23,12 @@ Marque cada item conforme for concluindo. A ordem segue o
 - [ ] Ferramenta onde o Gemini vai **escrever o código**: Gemini CLI, Gemini Code Assist (VS Code), Google AI Studio ou Antigravity — use os prompts de [04_PROMPTS_GOOGLE.md](04_PROMPTS_GOOGLE.md).
 - [ ] Conta de serviço da VM com papéis mínimos: `Secret Manager Secret Accessor`, `Logs Writer`, `Vertex AI User`.
 
+### Dados on-chain (opcional, ver 06_DADOS_ONCHAIN.md)
+- [ ] Criar chave de API da **Coinversa** (developers.coinversa.ai/keys, formato `cvsa_...`) e guardar no Secret Manager como `COINVERSA_API_KEY`.
+- [ ] Confirmar em docs.coinversa.ai: base URL, header `X-API-Key`, rotas usadas, tier de cada rota e se o plano Pro atual é trial.
+- [ ] **Exportar o quanto antes o histórico de coortes** (janela móvel de ~90 dias pode sumir).
+- [ ] Liquid: manter **somente leitura** (a conta está em modo real); nenhuma ordem por ela.
+
 ### Painel e alertas
 - [ ] Painel Lovable criado (ver [05_DASHBOARD_E_INTEGRACAO.md](05_DASHBOARD_E_INTEGRACAO.md)) e **você** cadastrado como primeiro usuário (dono).
 - [ ] Secret `BOT_INGEST_TOKEN` criado no Lovable (Project Settings → Secrets) (gere um valor aleatório longo) e o **mesmo** valor salvo no Google Secret Manager.
@@ -55,6 +61,7 @@ Marque cada item conforme for concluindo. A ordem segue o
 - [ ] **Broker simulado** (paper) com a mesma interface do broker real.
 - [ ] **Reconciliação** ao iniciar: ler ordens abertas, saldos e execuções na Bybit e reconstruir o estado (o robô pode reiniciar a qualquer momento sem duplicar ordens).
 - [ ] Comandos do painel (`pause`/`resume`) lidos periodicamente.
+- [ ] Camada on-chain (`OnchainProvider`) em modo sombra, fail-open, com teste de regressão (sem mudar nenhum trade em shadow).
 - [ ] Envio de dados ao painel (`bot-ingest`) + alertas no Telegram.
 - [ ] Logs estruturados (JSON) com nível, componente e símbolo.
 - [ ] Testes automatizados (`pytest`) para indicadores, score, setups, risco e executor (com Bybit simulada).
@@ -68,6 +75,7 @@ Marque cada item conforme for concluindo. A ordem segue o
 - [ ] **Bybit Demo Trading** por ≥ 4 semanas e ≥ 30 trades, com métricas dentro de ±30 % do backtest.
 - [ ] Testes de falha na conta demo: derrubar o robô com posição aberta, cortar a internet, reiniciar a VM, chave inválida, saldo insuficiente, par deslistado.
 - [ ] **Zero** operações sem stop no servidor durante todo o forward test.
+- [ ] Camada on-chain: contrafactual de cada regra (S1, F2, F3, R2, R3) avaliado; ativação de **uma** regra por vez, só se cumprir o critério pré-registrado.
 
 ## E. Conta real (Fase 9)
 

@@ -20,6 +20,7 @@ como robô: o **Gemini** escreve o código e atua como analista de risco, e o
 | 3 | [03_ESTRATEGIA.md](03_ESTRATEGIA.md) | Especificação da estratégia: universo, regime, score 0–100, setups de entrada, veto do Gemini, risco e saídas |
 | 4 | [04_PROMPTS_GOOGLE.md](04_PROMPTS_GOOGLE.md) | **Prompt mestre** + prompts de cada fase para o Gemini construir o robô + prompt do analista Gemini em tempo real + prompt de revisão semanal |
 | 5 | [05_DASHBOARD_E_INTEGRACAO.md](05_DASHBOARD_E_INTEGRACAO.md) | Painel de acompanhamento (Lovable) e contrato da API robô → painel |
+| 6 | [06_DADOS_ONCHAIN.md](06_DADOS_ONCHAIN.md) | Camada on-chain opcional (Coinversa/Hyperliquid + Liquid): regras, API, validação em modo sombra |
 | — | [config.example.yaml](config.example.yaml) | Todos os parâmetros ajustáveis |
 
 ## Onde acompanhar
@@ -61,6 +62,8 @@ como robô: o **Gemini** escreve o código e atua como analista de risco, e o
   robô cair.
 - **Subconta exclusiva**, chave **sem permissão de saque**, **IP fixo** da VM.
 - **VM fora dos EUA**: a Bybit retorna 403 para IPs americanos.
+- **Dados on-chain da Hyperliquid (Coinversa)** como camada opcional que só
+  reduz risco, começa em modo sombra e nunca impede o robô de funcionar.
 - **Validação em 3 etapas** antes do dinheiro real: backtest + walk-forward →
   paper → Bybit Demo Trading.
 - Reaproveita a lógica OTE/Fibonacci + Order Block do EA MQL5 deste

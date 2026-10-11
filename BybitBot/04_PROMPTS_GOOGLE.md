@@ -9,8 +9,8 @@
 2. **Contexto fixo**: salve o **Prompt Mestre** abaixo como `GEMINI.md` na
    raiz do projeto (o Gemini CLI lê esse arquivo automaticamente em toda
    conversa). Copie também para a pasta do projeto:
-   `03_ESTRATEGIA.md`, `05_DASHBOARD_E_INTEGRACAO.md` e
-   `config.example.yaml`.
+   `03_ESTRATEGIA.md`, `05_DASHBOARD_E_INTEGRACAO.md`,
+   `06_DADOS_ONCHAIN.md` e `config.example.yaml`.
 3. **Uma fase por vez**: cole o prompt da fase, deixe o Gemini planejar,
    revise o plano, peça a implementação, rode os testes e só então siga para
    a próxima fase. Faça commit no Git ao fim de cada fase.
@@ -279,6 +279,41 @@ Fase 6. Implemente as seções 5, 6 e 7 do 03_ESTRATEGIA.md:
    Bybit simulada; roteiro de testes manuais na conta demo (Gate 6).
 ```
 
+## PROMPT FASE 6B — Camada on-chain (Coinversa / Hyperliquid) em modo sombra
+
+```
+Fase 6B. Implemente a camada on-chain descrita em 06_DADOS_ONCHAIN.md e no
+bloco `onchain:` do config, SEM alterar nenhuma decisão enquanto
+`onchain.mode == "shadow"`:
+1. src/bot/onchain/provider.py com a interface OnchainProvider e três
+   implementações: CoinversaProvider (REST, header X-API-Key lido do segredo
+   COINVERSA_API_KEY), ReplayProvider (snapshots gravados, para backtest e
+   paper) e NullProvider (sempre "ausente").
+2. Adaptador com: mapeamento par Bybit -> coin HL (nativo, overrides k*1000,
+   exclusão de ':', '#', '@'), validação de preço ±2%, lista vazia = ausente,
+   bias recalculado de long/short notional, normalização de unidades (% vs
+   fração, OI em moeda vs USD, timestamps ms vs ISO sem fuso), dado acima de
+   max_data_age_minutes = ausente.
+3. Fail-open: timeouts, circuit breaker, orçamento diário de chamadas,
+   401/403 desliga por 24h com alerta, 429 respeita retryAfterSeconds.
+   Nenhuma exceção sai do provider. Chamadas só no scanner horário e no ciclo
+   de gatilho, nunca no caminho de stop/trailing/reconciliação/kill switch.
+4. Regras S1, F2, F3, R2, R3 e R4 exatamente como no documento, com os
+   limiares do config. Em shadow: calcular e gravar would_fire, score, risco
+   e stop hipotéticos de todas as regras (inclusive as derrubadas listadas em
+   shadow_only), de forma assíncrona e depois da decisão.
+5. Gravação contínua de snapshots (GCS/BigQuery) com asOf, versão do servidor
+   e hash do config; na primeira execução, exportar todo o histórico de
+   coortes disponível (janelas encadeadas de até 30 dias).
+6. Testes: unidades/mapeamento/listas vazias/timestamps; e teste de
+   REGRESSÃO obrigatório: com onchain.enabled=false e com mode=shadow, o
+   backtest gera exatamente os mesmos trades da estratégia base.
+7. Envie ao painel, em scanner_results.reasons, um resumo on-chain com asOf
+   (só exibição).
+Antes de codar, confirme rotas, header e limites em docs.coinversa.ai; se
+algo divergir, siga a documentação e me avise.
+```
+
 ## PROMPT FASE 7 — Painel, alertas e deploy no Google Cloud
 
 ```
@@ -371,7 +406,10 @@ Atue como gestor de risco cético:
    regime, distância do stop, score).
 3. Diga se o veto do Gemini está ajudando (compare trades "cautela" vs
    "aprovado").
-4. Proponha NO MÁXIMO uma alteração de parâmetro ou regra, com justificativa
+4. Se houver log on-chain em modo sombra, compare o resultado contrafactual
+   de cada regra (S1, F2, F3, R2, R3) com o real e diga se alguma já cumpre o
+   critério de ativação de 06_DADOS_ONCHAIN.md (sem ajustar limiares).
+5. Proponha NO MÁXIMO uma alteração de parâmetro ou regra, com justificativa
    e como testá-la no backtest antes de aplicar. Se a amostra for pequena
    demais (< 30 trades), diga que ainda não há dados suficientes e não
    proponha mudanças.
