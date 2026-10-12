@@ -169,6 +169,7 @@ class UniverseConfig(StrictModel):
     min_turnover_24h_usdt: PositiveFloat
     max_spread_pct: PositiveFloat
     min_bid_depth_2pct_usdt: NonNegFloat
+    depth_window_pct: PositiveFloat
     min_daily_candles: PositiveInt
     max_change_24h_pct: float
     min_change_24h_pct: float
@@ -215,6 +216,68 @@ class ScoreWeights(StrictModel):
         return self
 
 
+class TrendPoints(StrictModel):
+    price_above_ema50_4h: NonNegFloat
+    ema50_above_ema200_4h: NonNegFloat
+    price_above_ema50_1d: NonNegFloat
+    adx_trend_4h: NonNegFloat
+
+
+class RelativeStrengthPoints(StrictModel):
+    ret_short_vs_btc: NonNegFloat
+    ret_long_vs_btc: NonNegFloat
+    ratio_above_ema_1d: NonNegFloat
+
+
+class VolumePoints(StrictModel):
+    volume_ratio_in_band: NonNegFloat
+    obv_rising_4h: NonNegFloat
+    cmf_positive_4h: NonNegFloat
+
+
+class SqueezePoints(StrictModel):
+    bb_width_low_4h: NonNegFloat
+    upper_third_range_4h: NonNegFloat
+    atr_contracting_4h: NonNegFloat
+
+
+class DerivativesPoints(StrictModel):
+    oi_rising_price_flat: NonNegFloat
+    funding_ok: NonNegFloat
+    long_short_ok: NonNegFloat
+
+
+class MomentumPoints(StrictModel):
+    rsi_in_band_4h: NonNegFloat
+    macd_hist_rising_4h: NonNegFloat
+
+
+class ScorePoints(StrictModel):
+    trend: TrendPoints
+    relative_strength: RelativeStrengthPoints
+    volume: VolumePoints
+    squeeze: SqueezePoints
+    derivatives: DerivativesPoints
+    momentum: MomentumPoints
+
+
+NonPosFloat = Annotated[float, Field(le=0)]
+
+
+class ScorePenalties(StrictModel):
+    rsi_overbought_4h: NonPosFloat
+    stretched_from_ema20_4h: NonPosFloat
+    pump_volume: NonPosFloat
+    funding_hot: NonPosFloat
+    upper_wick_rejection_1d: NonPosFloat
+
+
+class ScoreCandles(StrictModel):
+    d1: Annotated[int, Field(ge=50, le=1000)]
+    h4: Annotated[int, Field(ge=50, le=1000)]
+    h1: Annotated[int, Field(ge=50, le=1000)]
+
+
 class ScoreConfig(StrictModel):
     watchlist_a_min: Pct
     watchlist_b_min: Pct
@@ -230,6 +293,32 @@ class ScoreConfig(StrictModel):
     funding_hot_pct: float
     max_long_short_ratio: PositiveFloat
     derivatives_neutral_points: NonNegFloat
+    points: ScorePoints
+    penalties: ScorePenalties
+    adx_min: NonNegFloat
+    rs_short_days: PositiveInt
+    rs_long_days: PositiveInt
+    ratio_ema_period: PositiveInt
+    obv_slope_bars: PositiveInt
+    cmf_min: float
+    range_lookback_4h: Annotated[int, Field(ge=2)]
+    upper_range_fraction: Annotated[float, Field(gt=0, lt=1)]
+    oi_rise_min_pct: float
+    oi_price_rise_max_pct: float
+    upper_wick_max_fraction: Annotated[float, Field(gt=0, le=1)]
+    wick_lookback_days: PositiveInt
+    candles: ScoreCandles
+    workers: Annotated[int, Field(ge=1, le=16)]
+
+    @model_validator(mode="after")
+    def _points_match_weights(self) -> ScoreConfig:
+        for component, weight in self.weights.model_dump().items():
+            total = sum(getattr(self.points, component).model_dump().values())
+            if abs(total - weight) > 1e-9:
+                raise ValueError(f"score.points.{component} soma {total:g}, mas weights.{component} = {weight}")
+        if self.rs_short_days >= self.rs_long_days:
+            raise ValueError("rs_short_days deve ser menor que rs_long_days")
+        return self
 
     @model_validator(mode="after")
     def _coherence(self) -> ScoreConfig:
@@ -371,6 +460,9 @@ class CostsConfig(StrictModel):
 class DashboardConfig(StrictModel):
     enabled: bool
     ingest_url: str
+    timeout_seconds: PositiveFloat
+    max_retries: Annotated[int, Field(ge=0, le=10)]
+    max_results_per_run: PositiveInt
 
     @field_validator("ingest_url")
     @classmethod

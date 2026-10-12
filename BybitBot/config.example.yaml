@@ -69,6 +69,7 @@ universe:
   min_turnover_24h_usdt: 5000000
   max_spread_pct: 0.15
   min_bid_depth_2pct_usdt: 50000
+  depth_window_pct: 2             # profundidade = ordens de compra até −2 % do preço médio (só finalistas)
   min_daily_candles: 120
   max_change_24h_pct: 25
   min_change_24h_pct: -15
@@ -108,6 +109,33 @@ score:
   funding_hot_pct: 0.05
   max_long_short_ratio: 1.5
   derivatives_neutral_points: 5
+  # pontos de cada condição (a soma por componente deve igualar weights) — seção 3 do 03_ESTRATEGIA.md
+  points:
+    trend: {price_above_ema50_4h: 7, ema50_above_ema200_4h: 7, price_above_ema50_1d: 5, adx_trend_4h: 6}
+    relative_strength: {ret_short_vs_btc: 6, ret_long_vs_btc: 6, ratio_above_ema_1d: 8}
+    volume: {volume_ratio_in_band: 8, obv_rising_4h: 6, cmf_positive_4h: 6}
+    squeeze: {bb_width_low_4h: 8, upper_third_range_4h: 4, atr_contracting_4h: 3}
+    derivatives: {oi_rising_price_flat: 4, funding_ok: 3, long_short_ok: 3}
+    momentum: {rsi_in_band_4h: 5, macd_hist_rising_4h: 5}
+  penalties: {rsi_overbought_4h: -10, stretched_from_ema20_4h: -10, pump_volume: -8, funding_hot: -5,
+              upper_wick_rejection_1d: -5}
+  adx_min: 20
+  rs_short_days: 7
+  rs_long_days: 30
+  ratio_ema_period: 20            # EMA da razão MOEDA/BTC (diário)
+  obv_slope_bars: 3               # OBV "inclinando para cima" = OBV atual > OBV de 3 velas 4H atrás
+  cmf_min: 0.05
+  range_lookback_4h: 20
+  upper_range_fraction: 0.6667    # terço superior do range
+  oi_rise_min_pct: 5
+  oi_price_rise_max_pct: 8
+  upper_wick_max_fraction: 0.6
+  wick_lookback_days: 3
+  candles:                        # velas FECHADAS buscadas por moeda em cada varredura
+    d1: 200
+    h4: 500
+    h1: 200
+  workers: 6                      # chamadas em paralelo (o limitador de taxa do cliente continua valendo)
 
 setups:
   enabled: [pullback_tendencia, rompimento_compressao, ote_fibo]
@@ -180,6 +208,9 @@ costs:
 dashboard:
   enabled: true
   ingest_url: "https://bybit-trader-view.lovable.app/api/public/bot-ingest"   # token via Secret Manager: BOT_INGEST_TOKEN
+  timeout_seconds: 15
+  max_retries: 3                  # 5xx, 503 e rede; 400/401 não repetem
+  max_results_per_run: 150        # linhas do ranking enviadas por varredura
 
 telegram:
   enabled: true   # TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID via Secret Manager
