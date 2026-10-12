@@ -26,8 +26,8 @@
 
 | Item | Valor encontrado | Status |
 |---|---|---|
-| Base URL | `https://api.coinversa.ai/api/public/v1` | Visto no código do cliente oficial (v0.12.0); **confirmar em docs.coinversa.ai** |
-| Autenticação | Header `X-API-Key: cvsa_...` (chaves em developers.coinversa.ai/keys) | Só visto no código-fonte; **confirmar** |
+| Base URL | `https://api.coinversa.ai/api/public/v1` | ✅ Confirmado na chamada real (12/10/2026) |
+| Autenticação | Header `X-API-Key: cvsa_...` (chaves em developers.coinversa.ai/keys) | ✅ Confirmado (12/10/2026); limites vêm nos headers `x-ratelimit-*` (por rota ~50/min) |
 | Plano atual | **Pro**: 600 req/min, 20.000/dia (pode ser o trial de 14 dias) | Lido via `/plan` |
 | Plano Free | 30 req/min, 1.000/dia | O orçamento do robô (800/dia) cabe no Free |
 
@@ -36,7 +36,7 @@ Rotas usadas (todas GET):
 | Uso | Rota |
 |---|---|
 | Viés por coorte atual | `/live/cohort-bias/{COIN}` (netBias em **fração** −1..1) |
-| Histórico horário de coortes | `/pulse/cohort-bias/history?coin=X&since=…` (netBias em **%**; janela máx. 30d por chamada) |
+| Histórico horário de coortes | `/pulse/cohort-bias/history?coin=X&since=90d` (netBias em **%**; `since` só aceita formato relativo — `7d`, `90d`, `3h`; ms e ISO dão HTTP 500; `90d` cabe numa chamada; 32 linhas/hora: `tierType` pnl, size, pnl_recent, size_recent × 8 grupos) |
 | Risco/crowding por moeda | `/live/risk/coins/{COIN}` |
 | Risco do mercado inteiro | `/live/risk/overview` |
 | Liquidações reais | `/live/risk/liquidations/summary?since=1h&coin=X` |
@@ -50,10 +50,14 @@ PEPEUSDT, preços ÷ 1000); símbolos com `:`, `#` ou `@` não são cripto
 (ações, HIP-4, spot interno) e devem ser excluídos; moeda sem perp na HL
 devolve **lista vazia**, que deve contar como **ausente**, nunca como "viés 0".
 
-> 🕒 **Urgente**: o histórico de coortes parece ser uma **janela móvel de ~90
-> dias** (o snapshot mais antigo encontrado foi 2026-07-13). O que não for
-> exportado agora pode sumir. O robô deve exportar o histórico disponível
-> logo na Fase 2 e gravar snapshots próprios a partir daí.
+> 🕒 O histórico de coortes é uma **janela móvel de ~90 dias** (em 12/10/2026 o
+> dado mais antigo era 2026-07-14). ✅ **Exportado em 12/10/2026**: 26 moedas
+> (spot Bybit com volume ≥ 5 M USDT e perp nativo na HL com preço compatível),
+> 1,76 milhão de linhas em `data/onchain.db` na VM. Um cron diário na VM
+> (03:17 UTC, `export_cohort_history --refresh`, janela de 3 dias) continua a
+> cópia sem perder horas, com 26 chamadas/dia (cabe no plano Free).
+> Na `market-overview`, perps nativos vêm com `dex = "hl"`; os demais valores
+> (`xyz`, `hyna`, `km`, `cash`, `flx`...) são builder dexes e ficam de fora.
 
 ## 3. Regras mantidas (após revisão crítica)
 

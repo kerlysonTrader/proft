@@ -72,7 +72,9 @@ universe:
   min_daily_candles: 120
   max_change_24h_pct: 25
   min_change_24h_pct: -15
-  exclude_bases: [USDC, FDUSD, DAI, TUSD, USDE, PYUSD, EURC, WBTC, WETH, STETH]
+  exclude_bases: [                # stablecoins, ouro/ativos atrelados e wrapped (quase não oscilam)
+    USDC, FDUSD, DAI, TUSD, USDE, PYUSD, EURC, RLUSD, USD1, USDS, USDD, USDP, BUSD, FRAX, GHO, LUSD,
+    SUSDE, USDT0, USDTB, USDR, EURI, XAUT, PAXG, WBTC, WETH, STETH, WSTETH, CBBTC]
   exclude_suffixes: ["2L", "3L", "5L", "2S", "3S", "5S"]
   blacklist: []
 
@@ -234,7 +236,12 @@ onchain:
     enabled: true                # heatmap, near-liq e alavancagem não têm histórico na API;
     uri: "gs://<bucket>/onchain/"  # o histórico de coorte parece ser janela móvel de ~90 dias
     async_write: true            # grava DEPOIS da decisão; nunca no caminho da ordem
-    export_cohort_history_on_start: true   # exporta o histórico disponível (janelas de até 30 d)
+    export_cohort_history_on_start: true   # exporta o histórico disponível
+    local_db_path: data/onchain.db         # cópia local (SQLite) do histórico de coortes
+    export_since: 90d                      # formato relativo da API (ms e ISO são recusados); 90d cabe numa chamada
+    refresh_since: 3d                      # atualização diária (cron): 3 dias com sobreposição; a API guarda 90d
+    export_timeout_seconds: 60             # a resposta de 90 dias tem ~68 mil linhas por moeda
+    export_min_interval_ms: 1300           # ~45 chamadas/min (limite por rota visto: 50/min)
 
   # --- mapeamento par Bybit spot -> coin da Hyperliquid ---
   symbol_map:
@@ -245,6 +252,7 @@ onchain:
       BONK: {hl: kBONK, mult: 1000}
       FLOKI: {hl: kFLOKI, mult: 1000}
       LUNC: {hl: kLUNC, mult: 1000}
+    native_dex: hl               # campo "dex" dos perps nativos na market-overview (xyz, hyna, km... = builder dexes)
     exclude_hl_patterns: [":", "#", "@"]   # builder dexes (ações/FX), HIP-4, spot interno HL
     price_check_max_dev_pct: 2.0 # (markPx HL ÷ mult) vs lastPrice Bybit; fora disso = ausente
     deny: []                     # colisões de ticker confirmadas (mesmo símbolo, ativo diferente)

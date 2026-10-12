@@ -56,6 +56,14 @@ e compare EMA 20/50/200, RSI 14 e ATR 14 (diferença aceitável < 0,5 %).
 Grava em `data/history.db` (fora do Git) e a lista em `data/history_symbols.json`. Rodar de novo só
 baixa o que falta. Limitação: as 50 maiores de **hoje** → viés de sobrevivência no backtest.
 
+### Histórico de coortes da Coinversa (camada on-chain)
+`onchain/cohort_history.py` + `tools/export_cohort_history.py` copiam os ~90 dias que a API guarda
+para `data/onchain.db` (na VM). Exportado em 12/10/2026 (26 moedas, 1,76 M linhas). Cron diário na VM:
+```
+17 3 * * * cd $HOME/app/bybit_bot && GCP_PROJECT=bybit-scanner-bot .venv/bin/python -m bot.tools.export_cohort_history --refresh --quiet >> $HOME/app/logs/cohort_refresh.log 2>&1
+```
+Backup fora da VM (bucket no Cloud Storage) ainda não existe.
+
 ### Travas de segurança do cliente
 - Só a categoria `spot` passa (`CategoryNotAllowedError` antes de qualquer chamada). Na Conta
   Unificada a chave tem derivativos em bloco; o código é quem impede.

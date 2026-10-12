@@ -423,11 +423,19 @@ class OnchainCacheTtl(StrictModel):
     heatmap: PositiveFloat
 
 
+RelativeWindow = Annotated[str, Field(pattern=r"^\d+[hd]$")]  # ex.: 3h, 90d
+
+
 class OnchainSnapshotLog(StrictModel):
     enabled: bool
     uri: str
     async_write: bool
     export_cohort_history_on_start: bool
+    local_db_path: str
+    export_since: RelativeWindow
+    refresh_since: RelativeWindow
+    export_timeout_seconds: PositiveFloat
+    export_min_interval_ms: NonNegInt
 
 
 class SymbolOverride(StrictModel):
@@ -438,6 +446,7 @@ class SymbolOverride(StrictModel):
 class OnchainSymbolMap(StrictModel):
     auto_native: bool
     overrides: dict[str, SymbolOverride]
+    native_dex: str
     exclude_hl_patterns: list[str]
     price_check_max_dev_pct: PositiveFloat
     deny: list[str]
