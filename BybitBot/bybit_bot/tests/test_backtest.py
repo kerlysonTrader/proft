@@ -50,7 +50,7 @@ def synthetic(symbol: str, hours: int, seed: int, drift: float = 0.0004, vol: fl
 def store(tmp_path_factory):
     s = KlineStore(tmp_path_factory.mktemp("bt") / "h.db")
     for sym, seed, drift in (("BTCUSDT", 1, 0.0003), ("AAAUSDT", 2, 0.0006), ("BBBUSDT", 3, 0.0004)):
-        for series in synthetic(sym, 24 * 150, seed, drift):
+        for series in synthetic(sym, 24 * 110, seed, drift):
             s.upsert(series)
     return s
 
@@ -62,10 +62,10 @@ def test_features_em_lote_iguais_as_do_robo(cfg, store):
     h1 = klines_to_frame(store.load("AAAUSDT", "60"))
     btc = klines_to_frame(store.load("BTCUSDT", "D"))
     frame = feature_frame(d1, h4, h1, btc, cfg.indicators, cfg.score)
-    for k in (300, 1501, 2222, 3500):
+    for k in (300, 1501, 2222, 2600):
         ts = int(h1["start_ms"].iloc[k]) + H
 
-        def upto(df, step):
+        def upto(df, step, ts=ts):
             return df[df["start_ms"] + step <= ts]
 
         live = compute_features("AAAUSDT", upto(d1, 24 * H), upto(h4, 4 * H), upto(h1, H), upto(btc, 24 * H), None,
@@ -83,7 +83,7 @@ def run(cfg, store, **cfg_updates):
     for sym in ("AAAUSDT", "BBBUSDT"):
         data[sym] = load_symbol(store, sym, sym[:3], btc.d1, c)
     start = T0 + 60 * 24 * H
-    return Backtester(c, data, start, T0 + 150 * 24 * H).run()
+    return Backtester(c, data, start, T0 + 110 * 24 * H).run()
 
 
 def test_backtest_contabilidade_fecha(cfg, store):

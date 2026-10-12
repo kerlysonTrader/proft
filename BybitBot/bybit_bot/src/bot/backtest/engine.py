@@ -294,7 +294,8 @@ class Backtester:
                 if check_filters(signal, ctx, cfg.setups.common, cfg.universe.max_spread_pct):
                     self.counters["filtered"] += 1
                     continue
-                exposures = [OpenExposure(p.symbol, p.qty_open * p.entry, cfg.risk.sectors.get(self.data[p.symbol].base))
+                sectors = cfg.risk.sectors
+                exposures = [OpenExposure(p.symbol, p.qty_open * p.entry, sectors.get(self.data[p.symbol].base))
                              for p in self.positions.values()]
                 exposures += [OpenExposure(o.signal.symbol, o.notional, cfg.risk.sectors.get(o.base))
                               for o in self.pending.values()]
