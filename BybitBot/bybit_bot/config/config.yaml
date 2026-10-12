@@ -23,6 +23,42 @@ bybit:
 logging:
   level: INFO                     # DEBUG | INFO | WARNING | ERROR
 
+market_data:
+  db_path: data/market.db         # velas FECHADAS persistidas (SQLite); caminho relativo à pasta bybit_bot
+  kline_page_limit: 1000          # máximo por chamada da Bybit
+  kline_close_grace_seconds: 5    # espera após o fechamento da vela antes de buscá-la
+  orderbook_depth: 200            # níveis do livro (spot aceita até 200)
+  derivatives_period: 1h          # intervalo do open interest e da razão long/short
+  oi_change_hours: 24             # janela da variação do open interest
+  cache_ttl_seconds:
+    tickers: 30
+    orderbook: 10
+    derivatives: 300
+    instruments: 3600
+  history:                        # download para o backtest (python -m bot.backtest.data_loader)
+    db_path: data/history.db
+    months: 13                    # 12 meses + 1 de aquecimento dos indicadores
+    top_n: 50                     # moedas de maior volume 24h (mais o BTC)
+    intervals: ["60", "240", "D"] # 1H, 4H, 1D
+
+indicators:                       # períodos usados pelo score e pelos setups
+  ema_short: 20
+  ema_mid: 50
+  ema_long: 200
+  rsi_period: 14
+  atr_period: 14
+  atr_avg_period: 50              # média do próprio ATR (contração de volatilidade)
+  adx_period: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  bollinger_period: 20
+  bollinger_std: 2.0
+  bb_width_lookback: 120          # janela do percentil da largura das Bandas
+  cmf_period: 20
+  obv_ema_period: 20
+  volume_avg_period: 20
+
 schedule:
   universe_and_score_minutes: 60  # scanner completo
   entry_triggers_minutes: 15      # checagem de gatilhos na Watchlist A

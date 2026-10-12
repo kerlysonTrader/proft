@@ -9,6 +9,7 @@ Especificação nos documentos da pasta acima (`../README.md`, `../02_PLANO_DE_E
 | Fase | Situação |
 |---|---|
 | 1 — Esqueleto + conector Bybit | ✅ pytest verde e smoke test aprovado na conta demo (11/10/2026) |
+| 2 — Dados de mercado + indicadores | 🟡 testes verdes e histórico baixado; falta a conferência com o TradingView (você) |
 
 ## O que existe
 
@@ -21,8 +22,39 @@ src/bot/
   bybit/errors.py      # exceções por retCode
   bybit/instruments.py # tickSize/basePrecision/mínimos; quantidade sempre para baixo
   tools/smoke_test.py  # teste de ponta a ponta na conta DEMO
+  data/market_data.py  # velas (só fechadas, paginação, cache, SQLite), tickers, livro, derivativos
+  storage/kline_store.py
+  indicators/core.py   # EMA, RMA, RSI, ATR, DMI/ADX, MACD, Bollinger + percentil, OBV, CMF, fractais
+  backtest/data_loader.py      # baixa 13 meses de 1H/4H/1D das 50 maiores + BTC
+  tools/indicator_snapshot.py  # indicadores da última vela fechada (conferência com o TradingView)
 tests/                 # Bybit simulada; nenhum teste chama a API real
 ```
+
+### Dados de derivativos
+O score usa open interest, funding e razão long/short do **perpétuo linear de mesmo nome**
+(ex.: BTCUSDT). São consultas públicas: o cliente aceita `category=linear` só para dados de
+mercado; ordens e chamadas privadas continuam só `spot`. Falha num desses dados = campo ausente
+(o robô segue sem ele).
+
+### Indicadores (iguais ao TradingView)
+EMA semeada com média simples; RSI, ATR e ADX de Wilder (RMA); desvio populacional nas Bandas.
+Cada valor usa só a vela atual e as anteriores (teste automático para todos, com controle negativo).
+Fractais aparecem na vela em que ficam **confirmados** (pivô + 5 velas), nunca antes.
+A EMA200 precisa de aquecimento: use ≥ 1000 velas para bater com o TradingView.
+
+### Conferência do Gate 2
+```bash
+.venv\Scripts\python -m bot.tools.indicator_snapshot --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 240
+```
+No TradingView, abra `BYBIT:BTCUSDT` (spot) no mesmo tempo gráfico, passe o mouse na vela indicada
+e compare EMA 20/50/200, RSI 14 e ATR 14 (diferença aceitável < 0,5 %).
+
+### Histórico para o backtest
+```bash
+.venv\Scripts\python -m bot.backtest.data_loader   # padrão do config: 13 meses, top 50, 1H/4H/1D
+```
+Grava em `data/history.db` (fora do Git) e a lista em `data/history_symbols.json`. Rodar de novo só
+baixa o que falta. Limitação: as 50 maiores de **hoje** → viés de sobrevivência no backtest.
 
 ### Travas de segurança do cliente
 - Só a categoria `spot` passa (`CategoryNotAllowedError` antes de qualquer chamada). Na Conta

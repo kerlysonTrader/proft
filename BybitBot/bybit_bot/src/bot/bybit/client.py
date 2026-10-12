@@ -42,7 +42,10 @@ from bot.bybit.errors import (
 )
 from bot.logging_setup import get_logger
 
+# Ordens e chamadas privadas: só spot. Dados públicos de mercado: spot e perpétuos lineares
+# (open interest, funding e long/short entram no score, mas o robô nunca opera derivativos).
 ALLOWED_CATEGORIES = frozenset({"spot"})
+MARKET_DATA_CATEGORIES = frozenset({"spot", "linear"})
 
 PRIVATE_ENDPOINTS = frozenset(
     {
@@ -91,6 +94,7 @@ class Kline:
     close: float
     volume: float
     turnover: float
+    symbol: str = ""
 
     @property
     def end_ms(self) -> int:
@@ -258,12 +262,13 @@ class BybitClient:
     def _check_guards(self, method: str, path: str, params: dict | None, body: dict | None, signed: bool):
         if signed and (method, path) not in PRIVATE_ENDPOINTS:
             raise EndpointNotAllowedError(f"endpoint privado não permitido pelo robô: {method} {path}")
+        allowed = ALLOWED_CATEGORIES if signed else MARKET_DATA_CATEGORIES
         for source in (params, body):
             category = (source or {}).get("category")
-            if category is not None and category not in ALLOWED_CATEGORIES:
-                raise CategoryNotAllowedError(
-                    f"categoria '{category}' recusada: o robô opera só spot (sem derivativos)"
-                )
+            if category is not None and category not in allowed:
+                reason = ("o robô opera só spot (sem derivativos)" if signed
+                          else "dados públicos só de spot e perpétuos lineares")
+                raise CategoryNotAllowedError(f"categoria '{category}' recusada: {reason}")
 
     def _backoff(self, attempt: int) -> float:
         delay = min(self.backoff_max, self.backoff_base * (2**attempt))
@@ -440,6 +445,26 @@ class BybitClient:
         data = self._request("GET", "/v5/market/tickers", params={"category": category, "symbol": symbol})
         return (data.get("result") or {}).get("list") or []
 
+    def get_orderbook(self, symbol: str, limit: int = 200, category: str = "spot") -> dict[str, Any]:
+        """Livro de ofertas: {"b": [[preço, qtd], ...], "a": [...], "ts": ms}. Spot aceita até 200 níveis."""
+        data = self._request("GET", "/v5/market/orderbook",
+                             params={"category": category, "symbol": symbol, "limit": limit})
+        return data.get("result") or {}
+
+    def get_open_interest(self, symbol: str, interval_time: str = "1h", limit: int = 25,
+                          category: str = "linear") -> list[dict[str, Any]]:
+        """Histórico de open interest do perpétuo (mais novo primeiro, como a Bybit devolve)."""
+        params = {"category": category, "symbol": symbol, "intervalTime": interval_time, "limit": limit}
+        data = self._request("GET", "/v5/market/open-interest", params=params)
+        return (data.get("result") or {}).get("list") or []
+
+    def get_account_ratio(self, symbol: str, period: str = "1h", limit: int = 1,
+                          category: str = "linear") -> list[dict[str, Any]]:
+        """Proporção de contas compradas/vendidas no perpétuo (buyRatio/sellRatio)."""
+        params = {"category": category, "symbol": symbol, "period": period, "limit": limit}
+        data = self._request("GET", "/v5/market/account-ratio", params=params)
+        return (data.get("result") or {}).get("list") or []
+
     def get_klines(
         self,
         symbol: str,
@@ -460,7 +485,7 @@ class BybitClient:
         rows = (data.get("result") or {}).get("list") or []
         klines = [
             Kline(int(r[0]), interval, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]),
-                  float(r[6]))
+                  float(r[6]), symbol)
             for r in rows
         ]
         return sorted(klines, key=lambda k: k.start_ms)

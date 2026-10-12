@@ -14,7 +14,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "config.yaml"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+
+
+def resolve_path(path: str | Path) -> Path:
+    """Caminhos relativos do config são relativos à pasta bybit_bot."""
+    path = Path(path)
+    return path if path.is_absolute() else PROJECT_ROOT / path
 
 Mode = Literal["paper", "demo", "live"]
 SetupName = Literal["pullback_tendencia", "rompimento_compressao", "ote_fibo"]
@@ -86,6 +93,68 @@ class BybitConfig(StrictModel):
 
 class LoggingConfig(StrictModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+
+
+KlineInterval = Literal["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W"]
+
+
+class CacheTtlConfig(StrictModel):
+    tickers: PositiveFloat
+    orderbook: PositiveFloat
+    derivatives: PositiveFloat
+    instruments: PositiveFloat
+
+
+class HistoryConfig(StrictModel):
+    db_path: str
+    months: Annotated[int, Field(ge=1, le=60)]
+    top_n: Annotated[int, Field(ge=1, le=300)]
+    intervals: list[KlineInterval]
+
+    @field_validator("intervals")
+    @classmethod
+    def _not_empty(cls, v: list[str]) -> list[str]:
+        if not v or len(set(v)) != len(v):
+            raise ValueError("history.intervals deve ter intervalos sem repetição")
+        return v
+
+
+class MarketDataConfig(StrictModel):
+    db_path: str
+    kline_page_limit: Annotated[int, Field(ge=1, le=1000)]
+    kline_close_grace_seconds: NonNegFloat
+    orderbook_depth: Annotated[int, Field(ge=1, le=200)]
+    derivatives_period: Literal["5min", "15min", "30min", "1h", "4h", "1d"]
+    oi_change_hours: PositiveInt
+    cache_ttl_seconds: CacheTtlConfig
+    history: HistoryConfig
+
+
+class IndicatorsConfig(StrictModel):
+    ema_short: PositiveInt
+    ema_mid: PositiveInt
+    ema_long: PositiveInt
+    rsi_period: PositiveInt
+    atr_period: PositiveInt
+    atr_avg_period: PositiveInt
+    adx_period: PositiveInt
+    macd_fast: PositiveInt
+    macd_slow: PositiveInt
+    macd_signal: PositiveInt
+    bollinger_period: Annotated[int, Field(ge=2)]
+    bollinger_std: PositiveFloat
+    bb_width_lookback: Annotated[int, Field(ge=2)]
+    cmf_period: PositiveInt
+    obv_ema_period: PositiveInt
+    volume_avg_period: PositiveInt
+
+    @model_validator(mode="after")
+    def _coherence(self) -> IndicatorsConfig:
+        if not self.ema_short < self.ema_mid < self.ema_long:
+            raise ValueError("as EMAs devem obedecer ema_short < ema_mid < ema_long")
+        if self.macd_fast >= self.macd_slow:
+            raise ValueError("macd_fast deve ser menor que macd_slow")
+        return self
 
 
 class ScheduleConfig(StrictModel):
@@ -492,6 +561,8 @@ class BotConfig(StrictModel):
     timezone: str
     bybit: BybitConfig
     logging: LoggingConfig
+    market_data: MarketDataConfig
+    indicators: IndicatorsConfig
     schedule: ScheduleConfig
     universe: UniverseConfig
     regime: RegimeConfig

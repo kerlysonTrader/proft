@@ -25,14 +25,35 @@ from conftest import SERVER_TIME_MS, err, ok, params_of
 
 # ---------------------------------------------------------------- travas de segurança
 @pytest.mark.parametrize("category", ["linear", "inverse", "option"])
-def test_recusa_categoria_que_nao_e_spot_antes_de_chamar_a_bybit(fake, make_client, category):
+def test_ordens_recusam_categoria_que_nao_e_spot_antes_de_chamar_a_bybit(fake, make_client, category):
     client = make_client()
     with pytest.raises(CategoryNotAllowedError):
         client.place_order(symbol="BTCUSDT", side="Buy", order_type="Limit", qty="1", price="1",
                            order_link_id="x", category=category)
     with pytest.raises(CategoryNotAllowedError):
-        client.get_klines("BTCUSDT", "60", category=category)
+        client.cancel_order(symbol="BTCUSDT", order_link_id="x", category=category)
+    with pytest.raises(CategoryNotAllowedError):
+        client.get_open_orders(category=category)
     assert fake.requests == []
+
+
+@pytest.mark.parametrize("category", ["inverse", "option"])
+def test_dados_publicos_recusam_inverse_e_option(fake, make_client, category):
+    with pytest.raises(CategoryNotAllowedError):
+        make_client().get_klines("BTCUSDT", "60", category=category)
+    assert fake.requests == []
+
+
+def test_dados_publicos_de_perpetuo_linear_sao_permitidos(fake, make_client):
+    fake.on("GET", "/v5/market/open-interest", ok({"list": [{"openInterest": "100", "timestamp": "1"}]}))
+    fake.on("GET", "/v5/market/account-ratio", ok({"list": [{"buyRatio": "0.6", "sellRatio": "0.4"}]}))
+    client = make_client()
+    assert client.get_open_interest("BTCUSDT")[0]["openInterest"] == "100"
+    assert client.get_account_ratio("BTCUSDT")[0]["buyRatio"] == "0.6"
+    oi_request = fake.calls("GET", "/v5/market/open-interest")[0]
+    assert params_of(oi_request) == {"category": "linear", "symbol": "BTCUSDT", "intervalTime": "1h",
+                                     "limit": "25"}
+    assert "X-BAPI-SIGN" not in oi_request.headers
 
 
 @pytest.mark.parametrize(
