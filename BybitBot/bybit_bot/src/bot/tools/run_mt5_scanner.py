@@ -1,0 +1,163 @@
+"""Scanner multi-mercado do MT5 (SOMENTE LEITURA) — roda no PC com o MT5 da corretora aberto.
+
+    python -m bot.tools.run_mt5_scanner                      # só mostra no terminal
+    python -m bot.tools.run_mt5_scanner --send               # envia ao painel (execução própria "MT5")
+    python -m bot.tools.run_mt5_scanner --send --loop 15     # repete a cada 15 min (Ctrl+C para parar)
+
+O token do painel vem do Secret Manager (projeto --project) pelo gcloud já logado no PC; nunca é
+mostrado. Os alertas (setup disparou e passou nos filtros) vão para Sinais e Logs do painel, uma
+única vez por vela. Nunca envia ordens: você decide e executa.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from bot.config import load_config, resolve_path
+from bot.logging_setup import setup_logging
+from bot.markets.mt5_scanner import (
+    LABEL_BY_LIST,
+    Mt5Scan,
+    Mt5Scanner,
+    alert_signal_payload,
+    alert_text,
+    mt5_payload,
+)
+from bot.markets.mt5_source import Mt5Error, Mt5Reader
+from bot.markets.stats import load_stats
+from bot.reporting.dashboard_client import DashboardClient
+from bot.secrets import SecretProvider
+
+STATE_DIR = "data/mt5_state"
+SENT_PATH = "data/mt5_state/alertas_enviados.json"
+DEFAULT_PROJECT = "bybit-scanner-bot"
+
+
+def backtest_stats(config, groups: list[str]) -> dict:
+    """(grupo, direção) -> estatística dos trades do run_backtest (labels mt5_<grupo>_<long|short>)."""
+    out = {}
+    for group in groups:
+        for direction, side in ((1, "long"), (-1, "short")):
+            out[(group, direction)] = load_stats(resolve_path(f"data/backtest/mt5_{group}_{side}_trades.csv"))
+    return out
+
+
+def print_scan(scan: Mt5Scan, config, top: int) -> None:
+    tz = ZoneInfo(config.timezone)
+    when = datetime.fromtimestamp(scan.run_at_ms / 1000, tz)
+    print(f"\n===== SCANNER MT5 — {when:%d/%m %H:%M} ({config.timezone}) — {scan.duration_ms / 1000:.1f} s =====")
+    for name, regime in scan.regimes.items():
+        if regime.regime != "risk_on":
+            print(f"  · {name}: {regime.regime}")
+    print(f"{'#':>3} {'ativo':<20}{'score':>6} {'lista':<12}{'tend':>5}{'vol':>5}{'comp':>5}{'mom':>5}{'pen':>5}"
+          f"{'24h%':>7}  observação")
+    for i, r in enumerate(scan.rows[:top], 1):
+        c = r.score.components
+        obs = "ALERTA" if r.alerts else ("barrado" if r.blocked else "")
+        obs += "" if r.market_open else " (mercado fechado)"
+        print(f"{i:>3} {r.label:<20}{r.score.total:>6.1f} {LABEL_BY_LIST[r.watchlist]:<12}{c['trend']:>5g}"
+              f"{c['volume']:>5g}{c['squeeze']:>5g}{c['momentum']:>5g}{r.score.penalties:>5g}"
+              f"{r.change_24h_pct:>7.2f}  {obs}")
+    for row, signal in scan.alerts:
+        print(" ", alert_text(row, signal))
+    if scan.errors:
+        print("Erros:", scan.errors)
+
+
+def load_sent() -> list[str]:
+    try:
+        return list(json.loads(resolve_path(SENT_PATH).read_text(encoding="utf-8")))
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def save_sent(sent: list[str]) -> None:
+    path = resolve_path(SENT_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sent[-500:]), encoding="utf-8")
+
+
+def send_scan(scan: Mt5Scan, config, dashboard: DashboardClient) -> bool:
+    result = dashboard.send("scanner_run", mt5_payload(scan, config.score, config.dashboard.max_results_per_run))
+    print(f"Painel (scanner MT5): {'OK' if result.ok else 'FALHOU'} (HTTP {result.status})")
+    ok = result.ok
+    sent = load_sent()
+    for row, signal in scan.alerts:
+        if signal.order_link_id in sent:
+            continue
+        r1 = dashboard.send("signal", alert_signal_payload(row, signal))
+        r2 = dashboard.send("log", {"level": "warning", "component": "mt5_scanner", "symbol": row.label,
+                                    "message": alert_text(row, signal),
+                                    "data": {"setup": signal.setup, "entry": signal.entry, "stop": signal.stop,
+                                             "tp1": signal.tp1, "tp2": signal.tp2, "grupo": row.group}})
+        print(f"Painel (alerta {signal.order_link_id}): sinal {r1.status}, log {r2.status}")
+        if r1.ok and r2.ok:
+            sent.append(signal.order_link_id)
+        ok &= r1.ok and r2.ok
+    save_sent(sent)
+    return ok
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Scanner do MT5 (somente leitura)")
+    parser.add_argument("--send", action="store_true", help="envia ao painel")
+    parser.add_argument("--loop", type=float, default=0, help="repete a cada N minutos (0 = uma vez)")
+    parser.add_argument("--groups", default=None, help="grupos separados por vírgula (padrão: todos)")
+    parser.add_argument("--top", type=int, default=25, help="linhas no resumo impresso")
+    parser.add_argument("--project", default=DEFAULT_PROJECT, help="projeto do Secret Manager (token do painel)")
+    args = parser.parse_args(argv)
+
+    config = load_config()
+    setup_logging("WARNING")
+    mcfg = config.markets.mt5
+    groups = [g.strip() for g in args.groups.split(",")] if args.groups else list(mcfg.groups)
+    unknown = [g for g in groups if g not in mcfg.groups]
+    if unknown:
+        print(f"Grupos desconhecidos: {unknown}; existentes: {', '.join(mcfg.groups)}")
+        return 1
+    dashboard = None
+    if args.send:
+        dashboard = DashboardClient.from_config(config, SecretProvider(project=args.project))
+        if dashboard is None:
+            print("Painel desligado no config (dashboard.enabled = false).")
+            return 1
+
+    exit_code = 0
+    try:
+        with Mt5Reader(mcfg.server_utc_offset_hours, mcfg.max_bars) as reader:
+            info = reader.describe()
+            print(f"MT5: {info['server']} | conectado={info['connected']} | somente leitura")
+            while True:
+                reader.detect_offset([s for g in groups for s in mcfg.groups[g]])
+                scan = Mt5Scanner(reader, config, groups, backtest_stats(config, groups),
+                                  state_dir=resolve_path(STATE_DIR)).run()
+                print_scan(scan, config, args.top)
+                if dashboard is not None:
+                    exit_code = 0 if send_scan(scan, config, dashboard) else 1
+                if args.loop <= 0:
+                    break
+                time.sleep(_seconds_to_next(args.loop))
+    except Mt5Error as exc:
+        print(f"MT5: {exc}")
+        return 1
+    except KeyboardInterrupt:
+        print("\nParado pelo usuário.")
+    finally:
+        if dashboard is not None:
+            dashboard.close()
+    return exit_code
+
+
+def _seconds_to_next(minutes: float) -> float:
+    """Até o próximo múltiplo de N minutos + 20 s (a vela de 15m já fechou no servidor)."""
+    step = minutes * 60
+    return step - (time.time() % step) + 20
+
+
+if __name__ == "__main__":
+    sys.exit(main())
