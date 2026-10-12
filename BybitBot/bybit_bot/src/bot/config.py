@@ -437,6 +437,8 @@ class RiskConfig(StrictModel):
     consecutive_losses_pause_hours: NonNegFloat
     weekly_drawdown_limit_pct: PositiveFloat
     max_drawdown_from_peak_pct: PositiveFloat
+    min_order_notional_usdt: PositiveFloat
+    sectors: dict[str, str]
 
     @model_validator(mode="after")
     def _coherence(self) -> RiskConfig:
@@ -469,6 +471,34 @@ class ExitsConfig(StrictModel):
 class CostsConfig(StrictModel):
     fee_rate_per_side: Annotated[float, Field(ge=0, lt=0.01)]
     backtest_slippage_pct: NonNegFloat
+
+
+class BacktestCandles(StrictModel):
+    h1: Annotated[int, Field(ge=100, le=1000)]
+    h4: Annotated[int, Field(ge=100, le=1000)]
+    d1_btc: Annotated[int, Field(ge=200, le=1000)]
+
+
+class WalkForwardConfig(StrictModel):
+    train_months: PositiveInt
+    test_months: PositiveInt
+    step_months: PositiveInt
+
+
+class GateConfig(StrictModel):
+    min_trades: PositiveInt
+    min_profit_factor: PositiveFloat
+    min_expectancy_r: float
+    max_drawdown_pct: PositiveFloat
+    max_single_trade_profit_share_pct: Pct
+
+
+class BacktestConfig(StrictModel):
+    initial_equity_usdt: PositiveFloat
+    warmup_days: NonNegInt
+    candles: BacktestCandles
+    walk_forward: WalkForwardConfig
+    gate: GateConfig
 
 
 class DashboardConfig(StrictModel):
@@ -687,6 +717,7 @@ class BotConfig(StrictModel):
     risk: RiskConfig
     exits: ExitsConfig
     costs: CostsConfig
+    backtest: BacktestConfig
     dashboard: DashboardConfig
     telegram: TelegramConfig
     onchain: OnchainConfig

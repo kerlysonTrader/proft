@@ -159,5 +159,95 @@ def compute_features(
     return Features(**values)
 
 
+FEATURE_COLUMNS = [name for name in Features.__dataclass_fields__ if name not in ("symbol", "derivatives")]
+
+
+def _ends(df: pd.DataFrame, interval_ms: int) -> pd.Index:
+    return pd.Index(df["start_ms"].to_numpy() + interval_ms)
+
+
+def feature_frame(d1: pd.DataFrame, h4: pd.DataFrame, h1: pd.DataFrame, btc_d1: pd.DataFrame, ind, sc
+                  ) -> pd.DataFrame:
+    """As mesmas features de compute_features, para TODAS as horas de uma vez (backtest).
+
+    Índice = fechamento de cada vela 1H (ms). Cada linha usa só velas 1H/4H/1D já fechadas naquele
+    instante. Válido porque todos os indicadores são causais (tests/test_indicators.py).
+    """
+    hour_ends = _ends(h1, 3_600_000)
+    out = pd.DataFrame(index=hour_ends)
+
+    if len(h4):
+        c4 = h4["close"]
+        d = dmi(h4, ind.adx_period)
+        o = obv(h4)
+        hist = macd(c4, ind.macd_fast, ind.macd_slow, ind.macd_signal)["hist"]
+        atr4 = atr(h4, ind.atr_period)
+        lo = h4["low"].rolling(sc.range_lookback_4h, min_periods=1).min()
+        hi = h4["high"].rolling(sc.range_lookback_4h, min_periods=1).max()
+        f4 = pd.DataFrame({
+            "close_4h": c4,
+            "ema20_4h": ema(c4, ind.ema_short),
+            "ema50_4h": ema(c4, ind.ema_mid),
+            "ema200_4h": ema(c4, ind.ema_long),
+            "adx_4h": d["adx"], "plus_di_4h": d["plus_di"], "minus_di_4h": d["minus_di"],
+            "obv_4h": o, "obv_past_4h": o.shift(sc.obv_slope_bars), "obv_ema_4h": ema(o, ind.obv_ema_period),
+            "cmf_4h": cmf(h4, ind.cmf_period),
+            "bb_width_rank_4h": percentile_rank(bollinger(c4, ind.bollinger_period, ind.bollinger_std)["width"],
+                                                ind.bb_width_lookback),
+            "range_position_4h": ((c4 - lo) / (hi - lo)).where(hi > lo),
+            "atr_4h": atr4, "atr_avg_4h": sma(atr4, ind.atr_avg_period),
+            "rsi_4h": rsi(c4, ind.rsi_period),
+            "macd_hist_4h": hist, "macd_hist_prev_4h": hist.shift(1),
+        })
+        f4.index = _ends(h4, 4 * 3_600_000)
+        out = out.join(f4.reindex(hour_ends, method="ffill"))
+
+    if len(d1):
+        cd = d1["close"]
+        span = d1["high"] - d1["low"]
+        wick = (d1["high"] - d1[["open", "close"]].max(axis=1)) / span.where(span > 0)
+        f1 = pd.DataFrame({
+            "close_1d": cd,
+            "ema50_1d": ema(cd, ind.ema_mid),
+            "daily_candles": pd.Series(range(1, len(d1) + 1), index=d1.index),
+            "ret_short": cd / cd.shift(sc.rs_short_days) - 1,
+            "ret_long": cd / cd.shift(sc.rs_long_days) - 1,
+            "max_upper_wick_fraction_1d": wick.rolling(sc.wick_lookback_days, min_periods=1).max(),
+            "avg_daily_turnover": d1["turnover"].shift(1).rolling(ind.volume_avg_period).mean(),
+        })
+        if len(btc_d1):
+            cb = btc_d1["close"]
+            ratio = (cd / cb.reindex(cd.index)).dropna()
+            f1 = f1.join(pd.DataFrame({"ratio_btc": ratio, "ratio_btc_ema": ema(ratio, sc.ratio_ema_period)}))
+        f1.index = _ends(d1, 86_400_000)
+        out = out.join(f1.reindex(hour_ends, method="ffill"))
+        out["daily_candles"] = out["daily_candles"].fillna(0).astype(int)
+
+    if len(btc_d1):
+        cb = btc_d1["close"]
+        fb = pd.DataFrame({"btc_ret_short": cb / cb.shift(sc.rs_short_days) - 1,
+                           "btc_ret_long": cb / cb.shift(sc.rs_long_days) - 1})
+        fb.index = _ends(btc_d1, 86_400_000)
+        out = out.join(fb.reindex(hour_ends, method="ffill"))
+
+    c1 = h1["close"]
+    out["rsi_1h"] = rsi(c1, ind.rsi_period).to_numpy()
+    out["change_24h_pct"] = ((c1 / c1.shift(HOURS_24) - 1) * 100).to_numpy()
+    turnover_24h = h1["turnover"].rolling(HOURS_24).sum().to_numpy()
+    if "avg_daily_turnover" in out:
+        out["volume_ratio"] = turnover_24h / out["avg_daily_turnover"].where(out["avg_daily_turnover"] > 0)
+        out["turnover_24h"] = turnover_24h
+        out = out.drop(columns=["avg_daily_turnover"])
+    for column in FEATURE_COLUMNS:
+        if column not in out:
+            out[column] = 0 if column == "daily_candles" else NAN
+    return out
+
+
+def features_from_row(symbol: str, row: pd.Series, derivatives: DerivativesSnapshot | None = None) -> Features:
+    values = {k: (int(row[k]) if k == "daily_candles" else float(row[k])) for k in FEATURE_COLUMNS}
+    return Features(symbol=symbol, derivatives=derivatives, **values)
+
+
 def is_num(value: float | None) -> bool:
     return value is not None and not (isinstance(value, float) and math.isnan(value))
