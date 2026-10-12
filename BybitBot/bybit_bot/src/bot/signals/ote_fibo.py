@@ -27,8 +27,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from bot.bybit.client import KLINE_INTERVAL_MS
 from bot.indicators import atr
-from bot.signals.base import Signal, closed_only
+from bot.signals.base import TF_LABEL, Signal, closed_only
 
 
 @dataclass(frozen=True)
@@ -57,14 +58,24 @@ class Leg:
 
 
 def find_pivots(df: pd.DataFrame, bars: int) -> list[Pivot]:
+    """Topos/fundos com `bars` velas de cada lado (estritamente maior/menor), em ordem cronológica."""
     high, low = df["high"].to_numpy(float), df["low"].to_numpy(float)
+    n = len(df)
+    if n < 2 * bars + 1:
+        return []
+    win_h = np.lib.stride_tricks.sliding_window_view(high, 2 * bars + 1)
+    win_l = np.lib.stride_tricks.sliding_window_view(low, 2 * bars + 1)
+    center_h, center_l = win_h[:, bars], win_l[:, bars]
+    others_h = np.delete(win_h, bars, axis=1)
+    others_l = np.delete(win_l, bars, axis=1)
+    is_high = center_h > others_h.max(axis=1)
+    is_low = center_l < others_l.min(axis=1)
     pivots = []
-    for i in range(bars, len(df) - bars):
-        left_h, right_h = high[i - bars:i], high[i + 1:i + bars + 1]
-        left_l, right_l = low[i - bars:i], low[i + 1:i + bars + 1]
-        if high[i] > left_h.max() and high[i] > right_h.max():
+    for k in np.flatnonzero(is_high | is_low):
+        i = int(k) + bars
+        if is_high[k]:
             pivots.append(Pivot(i, float(high[i]), True))
-        if low[i] < left_l.min() and low[i] < right_l.min():
+        if is_low[k]:
             pivots.append(Pivot(i, float(low[i]), False))
     return pivots
 
@@ -101,9 +112,11 @@ def find_order_block(df: pd.DataFrame, leg: Leg, atr_value: float, displacement_
     return None
 
 
-def ote_signal(symbol: str, h1: pd.DataFrame, now_ms: int, score: float, cfg, ind) -> Signal | None:
-    """cfg = setups.ote_fibo, ind = indicators."""
-    h1 = closed_only(h1, "60", now_ms).reset_index(drop=True)
+def ote_signal(symbol: str, h1: pd.DataFrame, now_ms: int, score: float, cfg, ind, trigger: str = "60"
+               ) -> Signal | None:
+    """cfg = setups.ote_fibo, ind = indicators; h1 = velas do tempo gráfico do gatilho."""
+    h1 = closed_only(h1, trigger, now_ms).reset_index(drop=True)
+    tf = TF_LABEL[trigger]
     if len(h1) < 2 * cfg.swing_bars + ind.atr_period + 5:
         return None
     atr_value = float(atr(h1, ind.atr_period).iloc[-1])
@@ -147,11 +160,12 @@ def ote_signal(symbol: str, h1: pd.DataFrame, now_ms: int, score: float, cfg, in
         symbol=symbol, setup="ote_fibo", entry=entry, stop=stop,
         tp1=leg.price_at(cfg.tp1_level), tp2=leg.price_at(cfg.tp2_level),
         candle_start_ms=int(cur["start_ms"]), valid_candles=cfg.order_valid_candles_1h, score=score,
-        reasons=(f"Perna de alta {leg.start.price:.6g} → {leg.end.price:.6g} ({leg.size / atr_value:.1f}× ATR 1H)",
+        reasons=(f"Perna de alta {leg.start.price:.6g} → {leg.end.price:.6g} ({leg.size / atr_value:.1f}× ATR {tf})",
                  f"Retração até a zona OTE {cfg.ote_start * 100:.1f}–{cfg.ote_end * 100:.0f}%"
                  + (" com Order Block" if ob else ""),
-                 "Vela 1H de rejeição fechou acima da zona",
+                 f"Vela {tf} de rejeição fechou acima da zona",
                  f"Alvos: 50% da perna, topo e extensão {cfg.tp3_extension:g} ({tp3:.6g})"),
         extra={"tp3": tp3, "leg_start": leg.start.price, "leg_end": leg.end.price,
                "zone": (zone_low, zone_high), "order_block": ob[:2] if ob else None},
+        interval_ms=KLINE_INTERVAL_MS[trigger],
     )

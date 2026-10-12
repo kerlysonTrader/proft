@@ -190,6 +190,10 @@ def render_markdown(result: BacktestResult, config: Any, wf_windows: list[dict] 
         lines += [f"| {_dt(t.opened_ms):%d/%m/%Y %H:%M} | {t.symbol} | {SETUP_LABEL.get(t.setup, t.setup)} | "
                   f"{t.r:.2f} | {t.pnl:.2f} | {t.exit_reason} |" for t in subset]
         lines.append("")
+    if result.block_reasons:
+        lines += ["## Por que os sinais foram barrados", "", "| Motivo (primeiro) | Sinais |", "|---|---:|"]
+        lines += [f"| {k} | {v} |" for k, v in result.block_reasons.most_common(20)]
+        lines.append("")
     if result.risk_events:
         lines += ["## Eventos do motor de risco", "", *[f"- {e}" for e in result.risk_events[:50]], ""]
     lines += ["## Limitações", "", *[f"- {n}" for n in result.notes], ""]

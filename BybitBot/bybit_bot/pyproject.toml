@@ -32,9 +32,10 @@ addopts = "-q"
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+extend-exclude = ["tests/reference"]  # gabarito copiado do projeto BullH1M1, mantido idêntico
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["bot", "conftest"]
+known-first-party = ["bot", "conftest", "reference"]

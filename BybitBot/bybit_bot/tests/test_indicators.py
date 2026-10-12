@@ -136,6 +136,40 @@ def test_fractal_exige_maximo_estrito():
 
 
 # ---------------------------------------------------------------- referência em laço ("planilha")
+def reference_seeded(values: list[float], period: int, alpha: float) -> list[float]:
+    """Laço original (antes da otimização com ewm): semente SMA, NaN repete o anterior."""
+    out = [NAN] * len(values)
+    run, seed_end = 0, None
+    for i, v in enumerate(values):
+        run = 0 if math.isnan(v) else run + 1
+        if run == period:
+            seed_end = i
+            break
+    if seed_end is None:
+        return out
+    prev = sum(values[seed_end - period + 1:seed_end + 1]) / period
+    out[seed_end] = prev
+    for i in range(seed_end + 1, len(values)):
+        if not math.isnan(values[i]):
+            prev = alpha * values[i] + (1 - alpha) * prev
+        out[i] = prev
+    return out
+
+
+@pytest.mark.parametrize("period", [1, 3, 14, 50])
+def test_ema_rma_iguais_ao_laco_original_inclusive_com_buracos(period):
+    rng = np.random.default_rng(period)
+    values = list(100 + np.cumsum(rng.normal(0, 1, 400)))
+    for i in (0, 1, 5, 6, 120, 121, 122, 300):  # buracos no início e no meio
+        values[i] = NAN
+    s = pd.Series(values)
+    assert_series(ema(s, period), reference_seeded(values, period, 2 / (period + 1)), tol=1e-9)
+    assert_series(rma(s, period), reference_seeded(values, period, 1 / period), tol=1e-9)
+    short = pd.Series(values[:period - 1] if period > 1 else [])
+    assert ema(short, period).isna().all()
+
+
+
 def reference_rsi(closes: list[float], n: int) -> list[float]:
     out = [NAN] * len(closes)
     gains = [max(closes[i] - closes[i - 1], 0) for i in range(1, len(closes))]

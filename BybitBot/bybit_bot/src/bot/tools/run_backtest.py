@@ -30,14 +30,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--exit-mode", choices=["trailing", "fixed_tp2"], default=None)
     parser.add_argument("--label", default="completo")
     parser.add_argument("--symbols", default=None, help="restringe a estas moedas (BTC sempre entra)")
+    parser.add_argument("--no-kill-switch", action="store_true",
+                        help="PESQUISA: desliga o kill switch para ver o período inteiro (nunca no robô real)")
+    parser.add_argument("--no-invalidation", action="store_true", help="desliga a saída por fechamento 4H < EMA50")
+    parser.add_argument("--intraday", action="store_true",
+                        help="perfil intraday: gatilho 15m, contexto 1H (precisa das velas de 15m no histórico)")
+    parser.add_argument("--time-stop-hours", type=float, default=None, help="horas máximas sem chegar a +0,5R")
+    parser.add_argument("--min-stop-pct", type=float, default=None, help="distância mínima do stop (%%)")
     args = parser.parse_args(argv)
 
     config = load_config()
+    if args.intraday:
+        config = config.model_copy(update={"setups": config.setups.model_copy(
+            update={"trigger_interval": "15", "context_interval": "60"})})
+    if args.time_stop_hours is not None:
+        config = config.model_copy(update={"exits": config.exits.model_copy(
+            update={"time_stop_hours": args.time_stop_hours})})
+    if args.min_stop_pct is not None:
+        config = config.model_copy(update={"setups": config.setups.model_copy(update={
+            "common": config.setups.common.model_copy(update={"min_stop_pct": args.min_stop_pct})})})
     if args.setups:
         config = config.model_copy(update={"setups": config.setups.model_copy(
             update={"enabled": [s.strip() for s in args.setups.split(",")]})})
     if args.exit_mode:
         config = config.model_copy(update={"exits": config.exits.model_copy(update={"mode_after_tp1": args.exit_mode})})
+    if args.no_kill_switch:
+        config = config.model_copy(update={"risk": config.risk.model_copy(update={"max_drawdown_from_peak_pct": 100})})
+    if args.no_invalidation:
+        config = config.model_copy(update={"exits": config.exits.model_copy(
+            update={"invalidation_close_below_ema50_4h": False})})
     setup_logging("WARNING")
 
     db_path = resolve_path(config.market_data.history.db_path)

@@ -13,23 +13,28 @@ from __future__ import annotations
 
 import pandas as pd
 
+from bot.bybit.client import KLINE_INTERVAL_MS
 from bot.indicators import atr
-from bot.signals.base import Signal, closed_only
+from bot.signals.base import TF_LABEL, Signal, closed_only
 
 
 def breakout_signal(symbol: str, h1: pd.DataFrame, h4: pd.DataFrame, now_ms: int, squeeze_points: float,
-                    score: float, cfg, ind, exits) -> Signal | None:
-    """cfg = setups.rompimento_compressao, ind = indicators, exits = exits."""
+                    score: float, cfg, ind, exits, trigger: str = "60", context: str = "240") -> Signal | None:
+    """cfg = setups.rompimento_compressao, ind = indicators, exits = exits.
+
+    h1/h4 = velas do tempo gráfico do gatilho e do contexto (padrão 1H/4H; intraday 15m/1H).
+    """
     if squeeze_points < cfg.min_squeeze_points:
         return None
-    h1 = closed_only(h1, "60", now_ms)
-    h4 = closed_only(h4, "240", now_ms)
+    h1 = closed_only(h1, trigger, now_ms)
+    h4 = closed_only(h4, context, now_ms)
+    tf, ctf = TF_LABEL[trigger], TF_LABEL[context]
     if len(h4) < cfg.range_lookback_4h or len(h1) < ind.volume_avg_period + ind.atr_period + 2:
         return None
 
     cur, prev = h1.iloc[-1], h1.iloc[-2]
     # o range usa só velas 4H que já tinham fechado antes da vela de rompimento começar
-    rng = h4[h4["start_ms"] + 4 * 3_600_000 <= cur["start_ms"]].iloc[-cfg.range_lookback_4h:]
+    rng = h4[h4["start_ms"] + KLINE_INTERVAL_MS[context] <= cur["start_ms"]].iloc[-cfg.range_lookback_4h:]
     if len(rng) < cfg.range_lookback_4h:
         return None
     level, range_low = float(rng["high"].max()), float(rng["low"].min())
@@ -56,8 +61,9 @@ def breakout_signal(symbol: str, h1: pd.DataFrame, h4: pd.DataFrame, now_ms: int
         tp1=entry + exits.tp1_r * risk, tp2=entry + exits.tp2_r * risk,
         candle_start_ms=int(cur["start_ms"]), valid_candles=cfg.order_valid_candles_1h, score=score,
         reasons=(f"Compressão {squeeze_points:g} pts (mín. {cfg.min_squeeze_points:g})",
-                 f"Vela 1H fechou acima da máxima de {cfg.range_lookback_4h} velas 4H ({level:.6g})",
+                 f"Vela {tf} fechou acima da máxima de {cfg.range_lookback_4h} velas {ctf} ({level:.6g})",
                  f"Volume {volume_ratio:.1f}× a média (mín. {cfg.breakout_volume_ratio:g}×)",
                  f"Entrada no reteste do nível + {cfg.retest_offset_pct:g}% (não persegue o preço)"),
         extra={"level": level, "range_low": range_low},
+        interval_ms=KLINE_INTERVAL_MS[trigger],
     )

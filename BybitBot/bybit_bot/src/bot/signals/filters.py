@@ -35,8 +35,10 @@ def check_filters(signal: Signal, ctx: SignalContext, common, max_spread_pct: fl
     if math.isnan(rr) or rr < common.min_rr_tp2:
         problems.append(f"R:R até o TP2 {rr:.2f} < {common.min_rr_tp2:g}")
     stop_pct = signal.stop_pct
-    if not common.min_stop_pct <= stop_pct <= common.max_stop_pct:
-        problems.append(f"stop a {stop_pct:.2f}% fora da faixa {common.min_stop_pct:g}–{common.max_stop_pct:g}%")
+    if stop_pct < common.min_stop_pct:
+        problems.append(f"stop curto demais: {stop_pct:.2f}% < {common.min_stop_pct:g}%")
+    elif stop_pct > common.max_stop_pct:
+        problems.append(f"stop longo demais: {stop_pct:.2f}% > {common.max_stop_pct:g}%")
     if not ctx.allow_new_entries:
         problems.append(f"regime {ctx.regime} / circuit breaker: sem novas entradas")
     spread = ctx.spread_pct.get(signal.symbol)

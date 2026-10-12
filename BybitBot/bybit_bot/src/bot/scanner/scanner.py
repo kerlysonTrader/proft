@@ -22,6 +22,7 @@ from bot.scanner.features import Features, compute_features, is_num
 from bot.scanner.regime import Regime, RegimeState, breadth_pct, evaluate_regime
 from bot.scanner.scoring import ScoreResult, classify, score_features
 from bot.scanner.universe import UniverseCoin, build_universe
+from bot.signals.plans import entry_plans, plan_lines
 
 log = get_logger("scanner")
 
@@ -36,6 +37,7 @@ class CoinResult:
     score: ScoreResult
     watchlist: str = "-"
     note: str | None = None
+    plans: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -130,6 +132,11 @@ class Scanner:
             result = CoinResult(coin, f, score, classify(score.total, sc, regime.regime))
             results.append(result)
         self._check_depth([r for r in results if r.watchlist in ("A", "B")])
+        for r in results:
+            if r.watchlist in ("A", "B"):
+                d = data[r.coin.symbol]
+                plans = entry_plans(d.h1, d.h4, r.score.components, run_at, cfg)
+                r.plans = plan_lines(plans, cfg.setups.common, cfg.exits)
         results.sort(key=lambda r: r.score.total, reverse=True)
 
         duration = int((time.monotonic() - started) * 1000)
@@ -197,7 +204,7 @@ def scanner_payload(scan: ScanResult, sc: Any, max_results: int) -> dict[str, An
             "rsi_4h": _round(f.rsi_4h, 1),
             "atr_pct": _round(f.atr_pct_4h, 2),
             "status": r.status,
-            "reasons": [head, *s.reasons, *(f"Sem dado: {m}" for m in s.missing[:3])],
+            "reasons": [head, *r.plans, *s.reasons, *(f"Sem dado: {m}" for m in s.missing[:3])],
         })
     return {
         "run": {

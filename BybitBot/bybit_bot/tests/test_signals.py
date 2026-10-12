@@ -252,8 +252,8 @@ def make_signal(**kw) -> Signal:
     "signal_kw, ctx_kw, fragment",
     [
         ({"tp2": 104}, {}, "R:R"),
-        ({"stop": 99.5, "tp2": 102}, {}, "stop a 0.50%"),
-        ({"stop": 90, "tp2": 125}, {}, "stop a 10.00%"),
+        ({"stop": 99.5, "tp2": 102}, {}, "stop curto demais: 0.50%"),
+        ({"stop": 90, "tp2": 125}, {}, "stop longo demais: 10.00%"),
         ({}, {"allow_new_entries": False, "regime": "risk_off"}, "risk_off"),
         ({}, {"spread_pct": {"XUSDT": 0.3}}, "spread"),
         ({}, {"open_symbols": {"XUSDT"}}, "posição aberta"),
@@ -303,3 +303,28 @@ def test_closed_only():
     df = candles([(1, 1, 1, 1)] * 3)
     assert len(closed_only(df, "60", end_ms(df) - 1)) == 2
     assert len(closed_only(df, "60", end_ms(df))) == 3
+
+
+# ------------------------------------------------------------------ planos de entrada (painel)
+def test_planos_de_entrada_seguem_as_regras_dos_setups(cfg):
+    from bot.signals.plans import entry_plans, plan_lines
+
+    h1 = candles(path(pullback_closes()))
+    plans = entry_plans(h1, h4_for(h1), {"trend": 25, "squeeze": 15}, end_ms(h1), cfg)
+    assert [p.setup for p in plans] == ["pullback_tendencia", "rompimento_compressao"]
+    for p in plans:
+        assert p.stop < p.entry < p.tp1 < p.tp2
+        assert (p.tp2 - p.entry) / (p.entry - p.stop) == pytest.approx(cfg.exits.tp2_r)
+    pb = plans[0]
+    assert pb.zone[0] < pb.zone[1]
+    lines = plan_lines(plans, cfg.setups.common, cfg.exits)
+    assert lines[0].startswith("Plano Pullback: zona de compra") and "(1,5R)" in lines[0] and "(3R)" in lines[0]
+    assert lines[-1].startswith("⚠ Planos informativos")
+
+
+def test_sem_plano_quando_score_nao_atende(cfg):
+    from bot.signals.plans import entry_plans, plan_lines
+
+    h1 = candles(path(pullback_closes()))
+    assert entry_plans(h1, h4_for(h1), {"trend": 10, "squeeze": 2}, end_ms(h1), cfg) == []
+    assert plan_lines([], cfg.setups.common, cfg.exits)[0].startswith("Plano: nenhum setup")

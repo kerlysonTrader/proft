@@ -26,26 +26,25 @@ def sma(series: pd.Series, period: int) -> pd.Series:
 
 
 def _seeded_recursive(series: pd.Series, period: int, alpha: float) -> pd.Series:
-    """Média exponencial semeada com a SMA das primeiras `period` observações válidas."""
+    """Média exponencial semeada com a SMA das primeiras `period` observações válidas consecutivas.
+
+    Depois da semente: y = alfa × x + (1 − alfa) × y_anterior; valores ausentes repetem o anterior.
+    A recursão roda no ewm do pandas (C), equivalente ao laço de referência dos testes.
+    """
     _check_period(period)
     values = series.to_numpy(dtype=float)
-    out = np.full(len(values), np.nan)
-    # semente: primeiras `period` observações válidas CONSECUTIVAS
-    run, seed_end = 0, None
-    for i, value in enumerate(values):
-        run = 0 if np.isnan(value) else run + 1
-        if run == period:
-            seed_end = i
-            break
-    if seed_end is None:
+    n = len(values)
+    out = np.full(n, np.nan)
+    if n < period:
         return pd.Series(out, index=series.index)
-    prev = values[seed_end - period + 1:seed_end + 1].mean()
-    out[seed_end] = prev
-    for i in range(seed_end + 1, len(values)):
-        value = values[i]
-        if not np.isnan(value):
-            prev = alpha * value + (1 - alpha) * prev
-        out[i] = prev
+    valid = (~np.isnan(values)).astype(np.int64)
+    full = np.flatnonzero(np.convolve(valid, np.ones(period, dtype=np.int64), mode="valid") == period)
+    if not full.size:
+        return pd.Series(out, index=series.index)
+    seed_end = int(full[0]) + period - 1
+    tail = values[seed_end:].copy()
+    tail[0] = values[seed_end - period + 1:seed_end + 1].mean()
+    out[seed_end:] = pd.Series(tail).ewm(alpha=alpha, adjust=False, ignore_na=True).mean().to_numpy()
     return pd.Series(out, index=series.index)
 
 
@@ -60,25 +59,25 @@ def rma(series: pd.Series, period: int) -> pd.Series:
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     """RSI de Wilder (0–100)."""
-    change = close.diff()
-    gain = change.clip(lower=0)
-    loss = (-change).clip(lower=0)
-    avg_gain = rma(gain, period)
-    avg_loss = rma(loss, period)
-    rs = avg_gain / avg_loss
-    out = 100 - 100 / (1 + rs)
-    out = out.where(avg_loss != 0, 100.0)                      # só altas
-    out = out.where(~((avg_gain == 0) & (avg_loss == 0)), 50.0)  # sem variação
-    return out.where(avg_gain.notna())
+    values = close.to_numpy(dtype=float)
+    change = np.r_[np.nan, np.diff(values)]
+    avg_gain = rma(pd.Series(np.clip(change, 0, None), index=close.index), period).to_numpy()
+    avg_loss = rma(pd.Series(np.clip(-change, 0, None), index=close.index), period).to_numpy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = 100 - 100 / (1 + avg_gain / avg_loss)
+    out = np.where(avg_loss == 0, 100.0, out)                          # só altas
+    out = np.where((avg_gain == 0) & (avg_loss == 0), 50.0, out)       # sem variação
+    out = np.where(np.isnan(avg_gain), np.nan, out)
+    return pd.Series(out, index=close.index)
 
 
 def true_range(df: pd.DataFrame) -> pd.Series:
-    prev_close = df["close"].shift(1)
-    ranges = pd.concat(
-        [df["high"] - df["low"], (df["high"] - prev_close).abs(), (df["low"] - prev_close).abs()], axis=1)
-    tr = ranges.max(axis=1, skipna=True)
-    tr.iloc[:1] = (df["high"] - df["low"]).iloc[:1]  # primeira vela: máxima − mínima
-    return tr
+    high, low = df["high"].to_numpy(dtype=float), df["low"].to_numpy(dtype=float)
+    prev_close = np.r_[np.nan, df["close"].to_numpy(dtype=float)[:-1]]
+    tr = np.fmax(high - low, np.fmax(np.abs(high - prev_close), np.abs(low - prev_close)))
+    if len(tr):
+        tr[0] = high[0] - low[0]  # primeira vela: máxima − mínima
+    return pd.Series(tr, index=df.index)
 
 
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:

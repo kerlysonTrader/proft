@@ -139,6 +139,8 @@ score:
 
 setups:
   enabled: [pullback_tendencia, rompimento_compressao, ote_fibo]
+  trigger_interval: "60"          # tempo gráfico do gatilho: "60" = 1H (padrão) | "15" = intraday
+  context_interval: "240"         # contexto dos setups: "240" = 4H (padrão) | "60" = 1H no intraday
   pullback_tendencia:
     min_trend_points: 18
     rsi_touch_band_1h: [35, 45]
@@ -245,7 +247,7 @@ dashboard:
   max_results_per_run: 150        # linhas do ranking enviadas por varredura
 
 telegram:
-  enabled: true   # TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID via Secret Manager
+  enabled: false  # desligado por decisão do usuário (12/10/2026); alertas vão para o painel (Logs). Para ligar: TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no Secret Manager
 
 # ---------------------------------------------------------------------------
 # onchain — dados on-chain da Hyperliquid via Coinversa (OPCIONAL)

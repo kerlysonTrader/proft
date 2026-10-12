@@ -33,17 +33,21 @@ class Evaluation:
 
 def evaluate_setups(symbol: str, h1: pd.DataFrame, h4: pd.DataFrame, now_ms: int, components: dict[str, float],
                     score: float, config: Any) -> list[Signal]:
-    """Sinais brutos (antes dos filtros) de todos os setups habilitados."""
+    """Sinais brutos (antes dos filtros) de todos os setups habilitados.
+
+    h1/h4 = velas de setups.trigger_interval e setups.context_interval (padrão 1H/4H).
+    """
     st, ind, exits = config.setups, config.indicators, config.exits
+    trig, ctx = st.trigger_interval, st.context_interval
     found = []
     if "pullback_tendencia" in st.enabled:
         found.append(pullback_signal(symbol, h1, h4, now_ms, components.get("trend", 0), score,
-                                     st.pullback_tendencia, ind, exits))
+                                     st.pullback_tendencia, ind, exits, trig, ctx))
     if "rompimento_compressao" in st.enabled:
         found.append(breakout_signal(symbol, h1, h4, now_ms, components.get("squeeze", 0), score,
-                                     st.rompimento_compressao, ind, exits))
+                                     st.rompimento_compressao, ind, exits, trig, ctx))
     if "ote_fibo" in st.enabled:
-        found.append(ote_signal(symbol, h1, now_ms, score, st.ote_fibo, ind))
+        found.append(ote_signal(symbol, h1, now_ms, score, st.ote_fibo, ind, trig))
     return [s for s in found if s is not None]
 
 

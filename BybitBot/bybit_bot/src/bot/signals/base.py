@@ -14,6 +14,8 @@ import pandas as pd
 
 from bot.bybit.client import KLINE_INTERVAL_MS
 
+TF_LABEL = {"15": "15m", "60": "1H", "240": "4H", "D": "1D"}
+
 # Códigos curtos no orderLinkId: a Bybit aceita no máximo 36 caracteres
 SETUP_CODES = {"pullback_tendencia": "pb", "rompimento_compressao": "bo", "ote_fibo": "ote"}
 
@@ -26,11 +28,12 @@ class Signal:
     stop: float
     tp1: float
     tp2: float
-    candle_start_ms: int          # abertura da vela 1H que gerou o sinal
-    valid_candles: int            # validade da ordem limite, em velas 1H
+    candle_start_ms: int          # abertura da vela (do tempo gráfico do gatilho) que gerou o sinal
+    valid_candles: int            # validade da ordem limite, em velas do tempo gráfico do gatilho
     score: float = 0.0
     reasons: tuple[str, ...] = field(default_factory=tuple)
     extra: dict = field(default_factory=dict)  # ex.: tp3 do ote_fibo, nível rompido
+    interval_ms: int = 3_600_000  # duração da vela do gatilho
 
     @property
     def risk(self) -> float:
@@ -47,8 +50,8 @@ class Signal:
 
     @property
     def valid_until_ms(self) -> int:
-        """Fim da validade: a vela do sinal fecha e mais `valid_candles` velas 1H."""
-        return self.candle_start_ms + (1 + self.valid_candles) * KLINE_INTERVAL_MS["60"]
+        """Fim da validade: a vela do sinal fecha e mais `valid_candles` velas do gatilho."""
+        return self.candle_start_ms + (1 + self.valid_candles) * self.interval_ms
 
     @property
     def order_link_id(self) -> str:
@@ -60,7 +63,10 @@ def closed_only(df: pd.DataFrame, interval: str, now_ms: int) -> pd.DataFrame:
     """Só as velas cujo período já terminou."""
     if df.empty:
         return df
-    end = df["start_ms"] + KLINE_INTERVAL_MS[interval]
+    step = KLINE_INTERVAL_MS[interval]
+    if int(df["start_ms"].iat[-1]) + step <= now_ms:
+        return df  # caso comum: todas já fecharam
+    end = df["start_ms"] + step
     return df[end <= now_ms]
 
 

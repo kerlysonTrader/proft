@@ -397,6 +397,8 @@ class CommonSetupConfig(StrictModel):
 
 class SetupsConfig(StrictModel):
     enabled: list[SetupName]
+    trigger_interval: Literal["15", "60"]     # tempo gráfico do gatilho (15 = intraday)
+    context_interval: Literal["60", "240"]    # tempo gráfico de contexto dos setups
     pullback_tendencia: PullbackConfig
     rompimento_compressao: BreakoutConfig
     ote_fibo: OteFiboConfig
@@ -408,6 +410,12 @@ class SetupsConfig(StrictModel):
         if len(set(v)) != len(v):
             raise ValueError("setups.enabled tem nomes repetidos")
         return v
+
+    @model_validator(mode="after")
+    def _intervals(self) -> SetupsConfig:
+        if int(self.context_interval) <= int(self.trigger_interval):
+            raise ValueError("context_interval deve ser maior que trigger_interval")
+        return self
 
 
 # --------------------------------------------------------------------------- gemini / risco / saídas

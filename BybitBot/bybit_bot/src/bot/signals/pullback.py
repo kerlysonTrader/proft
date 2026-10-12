@@ -14,17 +14,22 @@ from __future__ import annotations
 
 import pandas as pd
 
+from bot.bybit.client import KLINE_INTERVAL_MS
 from bot.indicators import atr, ema, rsi
-from bot.signals.base import Signal, body_fraction, closed_only, is_bullish_engulfing
+from bot.signals.base import TF_LABEL, Signal, body_fraction, closed_only, is_bullish_engulfing
 
 
 def pullback_signal(symbol: str, h1: pd.DataFrame, h4: pd.DataFrame, now_ms: int, trend_points: float,
-                    score: float, cfg, ind, exits) -> Signal | None:
-    """cfg = setups.pullback_tendencia, ind = indicators, exits = exits."""
+                    score: float, cfg, ind, exits, trigger: str = "60", context: str = "240") -> Signal | None:
+    """cfg = setups.pullback_tendencia, ind = indicators, exits = exits.
+
+    h1/h4 = velas do tempo gráfico do gatilho e do contexto (padrão 1H/4H; intraday 15m/1H).
+    """
     if trend_points < cfg.min_trend_points:
         return None
-    h1 = closed_only(h1, "60", now_ms)
-    h4 = closed_only(h4, "240", now_ms)
+    h1 = closed_only(h1, trigger, now_ms)
+    h4 = closed_only(h4, context, now_ms)
+    tf, ctf = TF_LABEL[trigger], TF_LABEL[context]
     lookback = cfg.pullback_lookback_1h
     if len(h1) < max(ind.ema_mid, ind.rsi_period) + lookback + 2:
         return None
@@ -62,15 +67,16 @@ def pullback_signal(symbol: str, h1: pd.DataFrame, h4: pd.DataFrame, now_ms: int
     risk = entry - stop
     if pd.isna(atr_now) or risk <= 0:
         return None
-    zone = "zona EMA20–EMA50 1H" if in_zone else "EMA20 4H"
+    zone = f"zona EMA20–EMA50 {tf}" if in_zone else f"EMA20 {ctf}"
     return Signal(
         symbol=symbol, setup="pullback_tendencia", entry=entry, stop=stop,
         tp1=entry + exits.tp1_r * risk, tp2=entry + exits.tp2_r * risk,
         candle_start_ms=int(cur["start_ms"]), valid_candles=cfg.order_valid_candles_1h, score=score,
         reasons=(f"Tendência {trend_points:g} pts (mín. {cfg.min_trend_points:g})",
                  f"Recuo até a {zone}",
-                 f"RSI 1H desceu a {rsi_min:.0f} e voltou a {current_rsi:.0f}",
-                 "Vela 1H de confirmação: fechou acima da EMA20 1H com corpo forte"
+                 f"RSI {tf} desceu a {rsi_min:.0f} e voltou a {current_rsi:.0f}",
+                 f"Vela {tf} de confirmação: fechou acima da EMA20 {tf} com corpo forte"
                  + (" (engolfo de alta)" if is_bullish_engulfing(prev, cur) else " e acima da máxima anterior"),
-                 f"Stop na mínima do pullback − {cfg.stop_atr_buffer:g} × ATR 1H"),
+                 f"Stop na mínima do pullback − {cfg.stop_atr_buffer:g} × ATR {tf}"),
+        interval_ms=KLINE_INTERVAL_MS[trigger],
     )
