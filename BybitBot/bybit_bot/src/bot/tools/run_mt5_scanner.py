@@ -32,6 +32,7 @@ from bot.markets.mt5_source import Mt5Error, Mt5Reader
 from bot.markets.stats import load_stats
 from bot.reporting.dashboard_client import DashboardClient
 from bot.secrets import SecretProvider
+from bot.tools.run_scanner import gemini_analyst
 
 STATE_DIR = "data/mt5_state"
 SENT_PATH = "data/mt5_state/alertas_enviados.json"
@@ -65,6 +66,9 @@ def print_scan(scan: Mt5Scan, config, top: int) -> None:
               f"{r.change_24h_pct:>7.2f}  {obs}")
     for row, signal in scan.alerts:
         print(" ", alert_text(row, signal))
+    for r in scan.rows:
+        if r.gemini:
+            print(f"  {r.label}: {r.gemini.line()}")
     if scan.errors:
         print("Erros:", scan.errors)
 
@@ -129,13 +133,15 @@ def main(argv: list[str] | None = None) -> int:
 
     exit_code = 0
     try:
+        analyst = gemini_analyst(config)
+        print("Gemini:", f"ligado ({config.gemini.model_screening})" if analyst else "desligado (sem custo)")
         with Mt5Reader(mcfg.server_utc_offset_hours, mcfg.max_bars) as reader:
             info = reader.describe()
             print(f"MT5: {info['server']} | conectado={info['connected']} | somente leitura")
             while True:
                 reader.detect_offset([s for g in groups for s in mcfg.groups[g]])
                 scan = Mt5Scanner(reader, config, groups, backtest_stats(config, groups),
-                                  state_dir=resolve_path(STATE_DIR)).run()
+                                  state_dir=resolve_path(STATE_DIR), analyst=analyst).run()
                 print_scan(scan, config, args.top)
                 if dashboard is not None:
                     exit_code = 0 if send_scan(scan, config, dashboard) else 1

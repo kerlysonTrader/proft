@@ -464,12 +464,17 @@ class SetupsConfig(StrictModel):
 # --------------------------------------------------------------------------- gemini / risco / saídas
 class GeminiConfig(StrictModel):
     enabled: bool
+    calls_enabled: bool = False
     provider: Literal["vertex", "ai_studio"]
+    vertex_project: str = "bybit-scanner-bot"
+    vertex_location: str = "global"
     model_screening: str
     model_final: str
     use_google_search_grounding: bool
     timeout_seconds: PositiveFloat
     cache_hours: NonNegFloat
+    max_calls_per_day: NonNegInt = 30
+    analyze_watchlists: list[Literal["A", "B"]] = ["A"]
     on_failure: Literal["cautela", "fail_closed"]
     unlock_lookahead_days: NonNegInt
 

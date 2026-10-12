@@ -21,6 +21,7 @@ from typing import Any
 
 import pandas as pd
 
+from bot.ai.gemini_analyst import Analysis, GeminiAnalyst, analyze_many, now_brt
 from bot.data.market_data import klines_to_frame
 from bot.logging_setup import get_logger
 from bot.markets.mt5_source import Mt5Reader
@@ -73,6 +74,7 @@ class Mt5Row:
     plans: list[str] = field(default_factory=list)
     alerts: list[Signal] = field(default_factory=list)                     # dispararam e passaram nos filtros
     blocked: list[tuple[Signal, list[str]]] = field(default_factory=list)  # dispararam mas foram barrados
+    gemini: Analysis | None = None
 
     @property
     def label(self) -> str:
@@ -99,7 +101,9 @@ class Mt5Scan:
 class Mt5Scanner:
     def __init__(self, reader: Mt5Reader, config: Any, groups: list[str] | None = None,
                  stats: dict[tuple[str, int], dict[str, SetupStats]] | None = None,
-                 state_dir: str | Path | None = None, now_ms: Callable[[], int] | None = None) -> None:
+                 state_dir: str | Path | None = None, now_ms: Callable[[], int] | None = None,
+                 analyst: GeminiAnalyst | None = None) -> None:
+        self.analyst = analyst
         self.reader, self.cfg = reader, config
         mcfg = config.markets.mt5
         self.groups = groups or list(mcfg.groups)
@@ -136,6 +140,9 @@ class Mt5Scanner:
                 regime, group_rows = self._scan_group(group, direction, data, spreads, now)
                 regimes[f"{GROUP_LABEL.get(group, group)} · {side_word(direction)}"] = regime
                 rows.extend(group_rows)
+        wanted = self.cfg.gemini.analyze_watchlists
+        analyze_many(self.analyst, [(r, f"mt5:{r.symbol}:{side_word(r.direction)}", "mt5", mt5_context(r, now))
+                                    for r in rows if r.watchlist in wanted or r.alerts])
         rows.sort(key=lambda r: (-len(r.alerts), "AB-".index(r.watchlist), -r.score.total))
         scan = Mt5Scan(now, int((time.monotonic() - started) * 1000), rows, regimes, errors)
         log.info("varredura MT5 concluída", extra={"data": {
@@ -263,7 +270,9 @@ def mt5_payload(scan: Mt5Scan, sc: Any, max_results: int) -> dict[str, Any]:
         f, s = r.features, r.score
         flip = (lambda v: 100 - v) if r.direction < 0 else (lambda v: v)   # RSI mostrado no preço real
         blocked = [f"Setup {sig.setup} disparou mas foi barrado: {'; '.join(p)}" for sig, p in r.blocked]
+        gem = r.gemini.panel_fields() if r.gemini else {}
         results.append({
+            **gem,
             "symbol": r.label,
             "price": r.price,
             "change_24h_pct": _round(r.change_24h_pct, 2),
@@ -280,7 +289,8 @@ def mt5_payload(scan: Mt5Scan, sc: Any, max_results: int) -> dict[str, Any]:
             "rsi_4h": _round(flip(f.rsi_4h), 1),
             "atr_pct": _round(f.atr_pct_4h, 2),
             "status": r.status,
-            "reasons": [head, *(alert_text(r, a) for a in r.alerts), *blocked, *r.plans,
+            "reasons": [head, *(alert_text(r, a) for a in r.alerts), *([r.gemini.line()] if r.gemini else []),
+                        *blocked, *r.plans,
                         *(real_price_reason(x, r.direction) for x in s.reasons),
                         *(f"Sem dado: {real_price_reason(m, r.direction)}" for m in s.missing[:3])],
         })
@@ -300,7 +310,29 @@ def mt5_payload(scan: Mt5Scan, sc: Any, max_results: int) -> dict[str, Any]:
 def alert_signal_payload(row: Mt5Row, s: Signal) -> dict[str, Any]:
     from bot.signals.engine import signal_payload
 
-    payload = signal_payload(s, status="alerta")
+    vetoed = row.gemini is not None and row.gemini.verdict.veredito == "vetado"
+    payload = signal_payload(s, status="vetado" if vetoed else "alerta")
     payload["symbol"] = row.label
-    payload["reason"] = alert_text(row, s)
+    payload["reason"] = alert_text(row, s) + (f" | {row.gemini.line()}" if row.gemini else "")
     return payload
+
+
+ASSET_NAMES = {
+    "XAUUSD": "Ouro (XAU/USD)", "XAGUSD": "Prata (XAG/USD)", "XPTUSD": "Platina (XPT/USD)", "XCUUSD": "Cobre (XCU/USD)",
+    "NAS100": "Nasdaq 100", "SP500": "S&P 500", "US30": "Dow Jones 30", "GER40": "DAX 40 (Alemanha)",
+    "UK100": "FTSE 100 (Reino Unido)", "JPN225": "Nikkei 225 (Japão)", "XTIUSD": "Petróleo WTI",
+    "XBRUSD": "Petróleo Brent", "XNGUSD": "Gás natural (Henry Hub)",
+}
+
+
+def mt5_context(r: Mt5Row, now_ms: int) -> dict[str, Any]:
+    """Entrada do analista Gemini para um ativo do MT5 (intraday)."""
+    base = r.symbol.removesuffix(".s")
+    s = r.score
+    return {
+        "ativo": base, "nome": ASSET_NAMES.get(base, f"par de moedas {base[:3]}/{base[3:]}"),
+        "grupo": GROUP_LABEL.get(r.group, r.group), "direcao": side_word(r.direction), "operacao": "intraday (15m/1H)",
+        "agora": now_brt(now_ms), "lista": r.watchlist, "score": round(s.total, 1), "componentes": s.components,
+        "preco": r.price, "variacao_24h_pct": _round(r.change_24h_pct, 2),
+        "alertas": [alert_text(r, a) for a in r.alerts], "planos": [p for p in r.plans if p.startswith("Plano")][:2],
+    }

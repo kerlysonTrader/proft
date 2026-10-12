@@ -163,3 +163,26 @@ def test_gcloud_com_erro_vira_segredo_ausente(monkeypatch):
                               gcloud_runner=lambda a: subprocess.CompletedProcess(a, 1, stdout="", stderr="x"))
     monkeypatch.setattr(provider, "_client", lambda: (_ for _ in ()).throw(ImportError("sem biblioteca")))
     assert provider.get("BOT_INGEST_TOKEN", required=False) is None
+
+
+# ------------------------------------------------------------------ analista Gemini no scanner
+def test_gemini_analisa_a_watchlist_e_vai_ao_painel(config):
+    from bot.ai.gemini_analyst import Analysis, GeminiVerdict
+
+    class FakeAnalyst:
+        def __init__(self):
+            self.keys = []
+
+        def analyze(self, key, kind, context):
+            self.keys.append((key, kind, context["direcao"]))
+            return Analysis(GeminiVerdict(veredito="cautela", risco="medio", resumo="CPI amanhã"), ok=True)
+
+    analyst = FakeAnalyst()
+    cfg = config.model_copy(update={"gemini": config.gemini.model_copy(update={"analyze_watchlists": ["A", "B"]})})
+    scan = Mt5Scanner(FakeReader(), cfg, now_ms=lambda: NOW_MS, analyst=analyst).run()
+    analyzed = [r for r in scan.rows if r.gemini]
+    assert analyzed and all(r.watchlist in ("A", "B") for r in analyzed)
+    assert all(kind == "mt5" and key.startswith("mt5:") for key, kind, _ in analyst.keys)
+    row = next(x for x in mt5_payload(scan, cfg.score, 150)["results"] if x["gemini_verdict"])
+    assert row["gemini_verdict"] == "cautela" and row["gemini_summary"] == "CPI amanhã"
+    assert any(x.startswith("Gemini: cautela") for x in row["reasons"])

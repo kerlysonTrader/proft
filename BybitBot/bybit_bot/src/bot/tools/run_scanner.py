@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     state_path = resolve_path(STATE_PATH)
     state = RegimeState.load(state_path)
 
-    scan = Scanner(md, registry, config, state).run()
+    scan = Scanner(md, registry, config, state, analyst=gemini_analyst(config)).run()
     state.save(state_path)
 
     tz = ZoneInfo(config.timezone)
@@ -66,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
               f"{c['derivatives']:>6g}{c['momentum']:>5g}{r.score.penalties:>5g}{r.features.rsi_4h:>7.1f}  "
               f"{r.note or ''}")
     print(f"Horário: {datetime.fromtimestamp(scan.run_at_ms / 1000, tz):%d/%m %H:%M} ({config.timezone})")
+    for r in scan.results:
+        if r.gemini:
+            print(f"  {r.coin.symbol}: {r.gemini.line()}")
 
     exit_code = 0
     if args.send:
@@ -81,6 +84,16 @@ def main(argv: list[str] | None = None) -> int:
     store.close()
     client.close()
     return exit_code
+
+
+def gemini_analyst(config):
+    """Analista Gemini só com gemini.enabled e gemini.calls_enabled (chamadas reais geram custo)."""
+    g = config.gemini
+    if not (g.enabled and g.calls_enabled):
+        return None
+    from bot.ai.gemini_analyst import GeminiAnalyst
+
+    return GeminiAnalyst(g, resolve_path("data/gemini"))
 
 
 if __name__ == "__main__":

@@ -208,12 +208,17 @@ setups:
 
 gemini:
   enabled: true
-  provider: vertex          # vertex (recomendado na VM, sem chave) | ai_studio (GEMINI_API_KEY)
-  model_screening: "<modelo Gemini Flash mais recente>"
-  model_final: "<modelo Gemini Pro mais recente>"
+  calls_enabled: true       # chamadas REAIS (geram custo) — liberadas pelo usuário em 12/10/2026
+  provider: vertex          # vertex (VM: conta de serviço; PC: gcloud logado) | ai_studio (GEMINI_API_KEY)
+  vertex_project: bybit-scanner-bot
+  vertex_location: global
+  model_screening: gemini-3.8-flash   # conferido no catálogo do Vertex em 12/10/2026 (GA)
+  model_final: gemini-3.8-flash
   use_google_search_grounding: true
-  timeout_seconds: 45
+  timeout_seconds: 90       # com pesquisa no Google a resposta leva de 10 a 60 s
   cache_hours: 6
+  max_calls_per_day: 20     # teto de custo POR MÁQUINA (VM = cripto, PC = MT5); ~US$ 8/mês no pior caso
+  analyze_watchlists: [A, B]  # quem recebe análise no scanner (A primeiro; cache de 6 h por ativo)
   on_failure: cautela       # cautela | fail_closed
   unlock_lookahead_days: 14
 

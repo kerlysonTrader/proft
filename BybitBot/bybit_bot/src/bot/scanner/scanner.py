@@ -16,6 +16,7 @@ from typing import Any
 
 import pandas as pd
 
+from bot.ai.gemini_analyst import Analysis, GeminiAnalyst, analyze_many, now_brt
 from bot.data.market_data import MarketData
 from bot.logging_setup import get_logger
 from bot.scanner.features import Features, compute_features, is_num
@@ -38,6 +39,7 @@ class CoinResult:
     watchlist: str = "-"
     note: str | None = None
     plans: list[str] = field(default_factory=list)
+    gemini: Analysis | None = None
 
     @property
     def status(self) -> str:
@@ -72,8 +74,9 @@ class _CoinData:
 
 class Scanner:
     def __init__(self, md: MarketData, registry: Any, config: Any, state: RegimeState,
-                 now_ms: Callable[[], int] | None = None) -> None:
+                 now_ms: Callable[[], int] | None = None, analyst: GeminiAnalyst | None = None) -> None:
         self.md, self.registry, self.cfg, self.state = md, registry, config, state
+        self.analyst = analyst
         self._now_ms = now_ms or md.client.now_ms
 
     def _fetch(self, symbol: str, d1_limit: int) -> _CoinData:
@@ -137,6 +140,8 @@ class Scanner:
                 d = data[r.coin.symbol]
                 plans = entry_plans(d.h1, d.h4, r.score.components, run_at, cfg)
                 r.plans = plan_lines(plans, cfg.setups.common, cfg.exits)
+        analyze_many(self.analyst, [(r, f"cripto:{r.coin.symbol}", "cripto", crypto_context(r, regime, run_at))
+                                    for r in results if r.watchlist in cfg.gemini.analyze_watchlists])
         results.sort(key=lambda r: r.score.total, reverse=True)
 
         duration = int((time.monotonic() - started) * 1000)
@@ -187,7 +192,9 @@ def scanner_payload(scan: ScanResult, sc: Any, max_results: int) -> dict[str, An
         head = (f"{LABEL_BY_LIST[r.watchlist]} (score ≥ {threshold:g})" if r.watchlist != "-"
                 else f"Descartada: {r.note}" if r.note else f"Descartada (score < {sc.watchlist_b_min:g})")
         f, s = r.features, r.score
+        gem = r.gemini.panel_fields() if r.gemini else {}
         results.append({
+            **gem,
             "symbol": r.coin.symbol,
             "price": r.coin.price,
             "change_24h_pct": _round(r.coin.change_24h_pct, 2),
@@ -216,4 +223,21 @@ def scanner_payload(scan: ScanResult, sc: Any, max_results: int) -> dict[str, An
             "notes": " | ".join(notes)[:2000],
         },
         "results": results,
+    }
+
+
+def crypto_context(r: CoinResult, regime: Regime, now_ms: int) -> dict[str, Any]:
+    """Entrada do analista Gemini (seção 5): métricas do score, indicadores, preço e derivativos."""
+    f, s, d = r.features, r.score, r.features.derivatives
+    return {
+        "simbolo": r.coin.symbol, "moeda": r.coin.symbol.removesuffix("USDT"), "direcao": "compra",
+        "agora": now_brt(now_ms), "regime_btc": regime.regime, "lista": r.watchlist,
+        "score": round(s.total, 1), "componentes": s.components, "penalidades": s.penalties,
+        "preco": r.coin.price, "variacao_24h_pct": _round(r.coin.change_24h_pct, 2),
+        "volume_24h_usdt": round(r.coin.turnover_24h_usdt),
+        "rsi_1h": _round(f.rsi_1h, 1), "rsi_4h": _round(f.rsi_4h, 1),
+        "atr_4h_pct": _round(f.atr_pct_4h, 2),
+        "funding_pct": _round(d.funding_rate_pct, 4) if d else None,
+        "open_interest_24h_pct": _round(d.oi_change_pct, 2) if d else None,
+        "planos": r.plans[:2],
     }
