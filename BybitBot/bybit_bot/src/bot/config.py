@@ -24,7 +24,8 @@ def resolve_path(path: str | Path) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 Mode = Literal["paper", "demo", "live"]
-SetupName = Literal["pullback_tendencia", "rompimento_compressao", "ote_fibo"]
+SetupName = Literal["pullback_tendencia", "rompimento_compressao", "ote_fibo",
+                    "estrutura_bos", "estrutura_choch", "lt_rompimento", "cunha", "medias_cruzamento"]
 OnchainRule = Literal["S1", "F2", "F3", "R2", "R3"]
 
 
@@ -438,13 +439,36 @@ class CommonSetupConfig(StrictModel):
         return self
 
 
+class StructureSetupConfig(StrictModel):
+    pivot_bars: Annotated[int, Field(ge=1, le=20)]
+    line_tolerance_atr: NonNegFloat
+    min_line_touches: Annotated[int, Field(ge=2, le=6)]
+    ema_fast: PositiveInt
+    ema_slow: PositiveInt
+    ema_mid: PositiveInt
+    ema_long: PositiveInt
+    context: Literal["dow_e_media", "dow", "media"]
+    stop_atr_buffer: NonNegFloat
+    min_stop_atr: NonNegFloat
+    entry_tolerance_pct: NonNegFloat
+    order_valid_candles: PositiveInt
+
+    @model_validator(mode="after")
+    def _emas(self) -> StructureSetupConfig:
+        if not self.ema_fast < self.ema_slow < self.ema_mid < self.ema_long:
+            raise ValueError("setups.estrutura: médias devem ser rápida < lenta < média < longa")
+        return self
+
+
 class SetupsConfig(StrictModel):
     enabled: list[SetupName]
+    require_watchlist: Literal["A", "B", "todas"] = "A"   # quem pode gerar sinal
     trigger_interval: Literal["15", "60"]     # tempo gráfico do gatilho (15 = intraday)
     context_interval: Literal["60", "240"]    # tempo gráfico de contexto dos setups
     pullback_tendencia: PullbackConfig
     rompimento_compressao: BreakoutConfig
     ote_fibo: OteFiboConfig
+    estrutura: StructureSetupConfig
     common: CommonSetupConfig
 
     @field_validator("enabled")
@@ -507,7 +531,7 @@ class RiskConfig(StrictModel):
 
 class ExitsConfig(StrictModel):
     tp1_r: PositiveFloat
-    tp1_close_fraction: Annotated[float, Field(gt=0, lt=1)]
+    tp1_close_fraction: Annotated[float, Field(gt=0, le=1)]   # 1 = alvo único (fecha tudo no TP1)
     move_stop_to_breakeven_after_tp1: bool
     mode_after_tp1: Literal["trailing", "fixed_tp2"]
     tp2_r: PositiveFloat

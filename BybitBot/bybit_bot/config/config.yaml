@@ -200,6 +200,20 @@ setups:
     tp3_extension: 1.618            # extensão (informativa; o TP2 é o alvo do filtro de R:R)
     entry_tolerance_pct: 0.1
     order_valid_candles_1h: 2
+  require_watchlist: A             # quem pode gerar sinal: A | B | todas (estrutura: testada com "todas")
+  estrutura:                       # Dow, BOS/CHoCH, LTA/LTB, cunha e médias (signals/structure.py)
+    pivot_bars: 3                  # topo/fundo = 3 velas de cada lado (confirmado 3 velas depois)
+    line_tolerance_atr: 0.25       # tolerância das linhas de tendência e das quebras
+    min_line_touches: 2            # toques mínimos da LTB para o lt_rompimento
+    ema_fast: 9
+    ema_slow: 21
+    ema_mid: 50
+    ema_long: 200
+    context: dow_e_media           # filtro do tempo maior: dow_e_media | dow | media
+    stop_atr_buffer: 0.2           # stop = último fundo − 0,2 × ATR
+    min_stop_atr: 0.5
+    entry_tolerance_pct: 0.05      # limite = fechamento da vela do gatilho + 0,05 %
+    order_valid_candles: 2
   common:
     min_rr_tp2: 2.0
     min_stop_pct: 1.5

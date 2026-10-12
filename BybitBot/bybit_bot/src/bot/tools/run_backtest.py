@@ -44,6 +44,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--group", default=None, help="grupo do MT5 (metais, forex, indices, energia)")
     parser.add_argument("--short", action="store_true", help="estuda as VENDAS (gráfico invertido)")
     parser.add_argument("--fee-rate", type=float, default=None, help="custo por lado (fração), sobrepõe o do mercado")
+    parser.add_argument("--sem-score", action="store_true", help="qualquer ativo do universo pode gerar sinal")
+    parser.add_argument("--alvo-fixo", type=float, default=None, help="alvo único em R (fecha tudo no alvo)")
+    parser.add_argument("--contexto", choices=["dow_e_media", "dow", "media"], default=None)
     args = parser.parse_args(argv)
 
     config = load_config()
@@ -60,6 +63,18 @@ def main(argv: list[str] | None = None) -> int:
         config = config.model_copy(update={"exits": config.exits.model_copy(update={"mode_after_tp1": args.exit_mode})})
     if args.no_kill_switch:
         config = config.model_copy(update={"risk": config.risk.model_copy(update={"max_drawdown_from_peak_pct": 100})})
+    if args.sem_score:
+        config = config.model_copy(update={"setups": config.setups.model_copy(update={"require_watchlist": "todas"})})
+    if args.contexto:
+        config = config.model_copy(update={"setups": config.setups.model_copy(update={
+            "estrutura": config.setups.estrutura.model_copy(update={"context": args.contexto})})})
+    if args.alvo_fixo is not None:   # alvo único: fecha 100 % no TP1; o filtro de R:R passa a ser o próprio alvo
+        r = args.alvo_fixo
+        config = config.model_copy(update={
+            "exits": config.exits.model_copy(update={"tp1_r": r, "tp2_r": r + 0.01, "tp1_close_fraction": 1.0,
+                                                      "mode_after_tp1": "fixed_tp2"}),
+            "setups": config.setups.model_copy(update={"common": config.setups.common.model_copy(
+                update={"min_rr_tp2": r})})})
     if args.no_invalidation:
         config = config.model_copy(update={"exits": config.exits.model_copy(
             update={"invalidation_close_below_ema50_4h": False})})

@@ -143,7 +143,9 @@ def plan_lines(plans: list[Plan], common: Any, exits: Any, footer: str | list[st
     return lines
 
 
-SETUP_NAMES = {"pullback_tendencia": "Pullback", "rompimento_compressao": "Rompimento", "ote_fibo": "OTE"}
+SETUP_NAMES = {"pullback_tendencia": "Pullback", "rompimento_compressao": "Rompimento", "ote_fibo": "OTE",
+               "estrutura_bos": "BOS", "estrutura_choch": "CHoCH", "lt_rompimento": "Quebra de LTB",
+               "cunha": "Cunha", "medias_cruzamento": "Cruzamento de médias"}
 
 
 def plan_dict(p: Plan) -> dict[str, Any]:

@@ -17,7 +17,9 @@ from bot.bybit.client import KLINE_INTERVAL_MS
 TF_LABEL = {"15": "15m", "60": "1H", "240": "4H", "D": "1D"}
 
 # Códigos curtos no orderLinkId: a Bybit aceita no máximo 36 caracteres
-SETUP_CODES = {"pullback_tendencia": "pb", "rompimento_compressao": "bo", "ote_fibo": "ote"}
+SETUP_CODES = {"pullback_tendencia": "pb", "rompimento_compressao": "bo", "ote_fibo": "ote",
+               "estrutura_bos": "bos", "estrutura_choch": "cho", "lt_rompimento": "lt", "cunha": "cun",
+               "medias_cruzamento": "mm"}
 
 
 @dataclass(frozen=True)

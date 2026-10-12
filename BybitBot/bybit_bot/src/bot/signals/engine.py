@@ -17,6 +17,7 @@ from bot.signals.breakout import breakout_signal
 from bot.signals.filters import SignalContext, check_filters
 from bot.signals.ote_fibo import ote_signal
 from bot.signals.pullback import pullback_signal
+from bot.signals.structure_setups import structure_signals_live
 
 log = get_logger("signals")
 
@@ -32,7 +33,8 @@ class Evaluation:
 
 
 def evaluate_setups(symbol: str, h1: pd.DataFrame, h4: pd.DataFrame, now_ms: int, components: dict[str, float],
-                    score: float, config: Any) -> list[Signal]:
+                    score: float, config: Any,
+                    include_structure: bool = True) -> list[Signal]:
     """Sinais brutos (antes dos filtros) de todos os setups habilitados.
 
     h1/h4 = velas de setups.trigger_interval e setups.context_interval (padrão 1H/4H).
@@ -48,7 +50,10 @@ def evaluate_setups(symbol: str, h1: pd.DataFrame, h4: pd.DataFrame, now_ms: int
                                      st.rompimento_compressao, ind, exits, trig, ctx))
     if "ote_fibo" in st.enabled:
         found.append(ote_signal(symbol, h1, now_ms, score, st.ote_fibo, ind, trig))
-    return [s for s in found if s is not None]
+    found = [s for s in found if s is not None]
+    if include_structure:   # no backtest a estrutura vem pré-calculada (caminho rápido)
+        found += structure_signals_live(symbol, h1, h4, now_ms, score, config)
+    return found
 
 
 def evaluate(symbol: str, h1: pd.DataFrame, h4: pd.DataFrame, components: dict[str, float], score: float,

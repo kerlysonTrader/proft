@@ -30,7 +30,8 @@ def invert_frame(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-R_TARGET_SETUPS = {"pullback_tendencia", "rompimento_compressao"}
+R_TARGET_SETUPS = {"pullback_tendencia", "rompimento_compressao", "estrutura_bos", "estrutura_choch",
+                   "lt_rompimento", "cunha", "medias_cruzamento"}
 
 
 def to_short(signal: Signal, exits=None) -> Signal:

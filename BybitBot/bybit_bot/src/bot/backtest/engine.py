@@ -41,6 +41,8 @@ from bot.scanner.scoring import classify, score_features
 from bot.signals.direction import invert_frame
 from bot.signals.engine import evaluate_setups
 from bot.signals.filters import SignalContext, check_filters
+from bot.signals.structure import StructureParams, row_at, structure_arrays
+from bot.signals.structure_setups import STRUCTURE_SETUPS, TRIGGER_KEY, enabled_structure, structure_signals
 from bot.storage.kline_store import KlineStore
 
 log = get_logger("backtest.engine")
@@ -70,6 +72,8 @@ class SymbolData:
     ctx_ends: np.ndarray
     h4_end_set: frozenset = frozenset()  # fechamentos 4H (no MT5 ficam fora da grade UTC de 4 em 4 h)
     fee_rate: float | None = None   # custo por lado específico do ativo (MT5: spread); None = config
+    struct_trig: dict | None = None  # leitura de estrutura vela a vela (gatilho), se houver setup de estrutura
+    struct_ctx: dict | None = None   # idem no tempo gráfico de contexto
 
     def features_at(self, i: int) -> Features:
         values = dict(zip(self.columns, self.features[i], strict=True))
@@ -158,7 +162,15 @@ def load_symbol(store: KlineStore, symbol: str, base: str, btc_d1: pd.DataFrame 
         atr_trig=atr(trig, config.indicators.atr_period).to_numpy(),
         ctx=ctx, ctx_ends=ctx["start_ms"].to_numpy() + KLINE_INTERVAL_MS[context],
         h4_end_set=frozenset(int(t) for t in (h4["start_ms"].to_numpy() + H4)), fee_rate=fee_rate,
+        **_structure(trig, ctx, config),
     )
+
+
+def _structure(trig: pd.DataFrame, ctx: pd.DataFrame, config: Any) -> dict:
+    if not enabled_structure(config):
+        return {}
+    params = StructureParams.from_config(config.setups.estrutura, config.indicators.atr_period)
+    return {"struct_trig": structure_arrays(trig, params), "struct_ctx": structure_arrays(ctx, params)}
 
 
 def _maybe_invert(df: pd.DataFrame, invert: bool) -> pd.DataFrame:
@@ -329,13 +341,21 @@ class Backtester:
     def _triggers(self, ts: int, regime, scored) -> None:
         cfg = self.cfg
         equity = self._equity(ts)
+        allowed = {"A": {"A"}, "B": {"A", "B"}, "todas": {"A", "B", "-"}}[cfg.setups.require_watchlist]
+        struct = enabled_structure(cfg)
+        classic = any(s not in STRUCTURE_SETUPS for s in cfg.setups.enabled)
         for sym, _i, score, watchlist in sorted(scored, key=lambda x: -x[2].total):
-            if watchlist != "A" or sym in self.positions or sym in self.pending:
+            if watchlist not in allowed or sym in self.positions or sym in self.pending:
                 continue
             sd = self.data[sym]
-            trig = self._slice(sd.trig, sd.trig_ends, ts, cfg.backtest.candles.h1)
-            ctx_frame = self._slice(sd.ctx, sd.ctx_ends, ts, cfg.backtest.candles.h4)
-            signals = evaluate_setups(sym, trig, ctx_frame, ts, score.components, score.total, cfg)
+            signals = []
+            if classic:
+                trig = self._slice(sd.trig, sd.trig_ends, ts, cfg.backtest.candles.h1)
+                ctx_frame = self._slice(sd.ctx, sd.ctx_ends, ts, cfg.backtest.candles.h4)
+                signals = evaluate_setups(sym, trig, ctx_frame, ts, score.components, score.total, cfg,
+                                          include_structure=False)
+            if struct and sd.struct_trig is not None:
+                signals += self._structure_signals(sym, sd, ts, score.total, struct)
             if not signals:
                 continue
             self.counters["signals"] += len(signals)
@@ -365,6 +385,17 @@ class Backtester:
                 self.pending[sym] = PendingOrder(signal, decision.qty, decision.notional, regime.regime, sd.base, ts)
                 self.counters["placed"] += 1
                 break  # um sinal por moeda
+
+    def _structure_signals(self, sym: str, sd: SymbolData, ts: int, score: float, struct: list[str]) -> list:
+        """Estrutura pré-calculada: lê a vela do gatilho que fecha em ts e o último contexto fechado."""
+        pos = sd.trig_pos.get(ts)
+        if pos is None or not any(sd.struct_trig[TRIGGER_KEY[s]][pos] for s in struct):
+            return []
+        k = int(np.searchsorted(sd.ctx_ends, ts, side="right")) - 1
+        if k < 0:
+            return []
+        return structure_signals(sym, row_at(sd.struct_trig, pos), row_at(sd.struct_ctx, k),
+                                 int(sd.trig["start_ms"].iat[pos]), score, self.cfg, struct)
 
     def _count_block(self, setup: str, reasons: list[str]) -> None:
         """Conta o primeiro motivo de bloqueio, sem os números (ex.: "stop a #% fora da faixa ...")."""
