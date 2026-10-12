@@ -132,31 +132,57 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     exit_code = 0
+    analyst = gemini_analyst(config)
+    print("Gemini:", f"ligado ({config.gemini.model_screening})" if analyst else "desligado (sem custo)")
+    reader = Mt5Reader(mcfg.server_utc_offset_hours, mcfg.max_bars)
+    connected = False
     try:
-        analyst = gemini_analyst(config)
-        print("Gemini:", f"ligado ({config.gemini.model_screening})" if analyst else "desligado (sem custo)")
-        with Mt5Reader(mcfg.server_utc_offset_hours, mcfg.max_bars) as reader:
-            info = reader.describe()
-            print(f"MT5: {info['server']} | conectado={info['connected']} | somente leitura")
-            while True:
-                reader.detect_offset([s for g in groups for s in mcfg.groups[g]])
-                scan = Mt5Scanner(reader, config, groups, backtest_stats(config, groups),
-                                  state_dir=resolve_path(STATE_DIR), analyst=analyst).run()
-                print_scan(scan, config, args.top)
-                if dashboard is not None:
-                    exit_code = 0 if send_scan(scan, config, dashboard) else 1
-                if args.loop <= 0:
-                    break
-                time.sleep(_seconds_to_next(args.loop))
-    except Mt5Error as exc:
-        print(f"MT5: {exc}")
-        return 1
+        while True:
+            try:
+                if not connected:
+                    reader.__enter__()
+                    connected = True
+                    info = reader.describe()
+                    print(f"MT5: {info['server']} | conectado={info['connected']} | somente leitura")
+                exit_code = run_once(reader, config, groups, analyst, dashboard, args.top)
+                if exit_code == 2:   # sem dados: MT5 fechado/desconectado -> reconecta no próximo ciclo
+                    reader.__exit__(None, None, None)
+                    connected = False
+            except Mt5Error as exc:
+                print(f"MT5: {exc} — tento de novo no próximo ciclo (o MT5 está aberto e logado?)")
+                exit_code, connected = 1, False
+            except Exception as exc:  # um ciclo com erro não derruba o laço
+                print(f"Erro no ciclo: {type(exc).__name__}: {exc}")
+                exit_code = 1
+            if args.loop <= 0:
+                break
+            time.sleep(_seconds_to_next(args.loop))
     except KeyboardInterrupt:
         print("\nParado pelo usuário.")
     finally:
+        if connected:
+            reader.__exit__(None, None, None)
         if dashboard is not None:
             dashboard.close()
     return exit_code
+
+
+def run_once(reader: Mt5Reader, config, groups: list[str], analyst, dashboard, top: int) -> int:
+    """Uma varredura. 0 = ok, 1 = falha ao enviar, 2 = sem dados do MT5 (nada é enviado)."""
+    mcfg = config.markets.mt5
+    reader.detect_offset([s for g in groups for s in mcfg.groups[g]])
+    scan = Mt5Scanner(reader, config, groups, backtest_stats(config, groups),
+                      state_dir=resolve_path(STATE_DIR), analyst=analyst).run()
+    if not scan.rows:
+        print(f"MT5 sem dados ({len(scan.errors)} erros de leitura) — nada enviado ao painel")
+        return 2
+    print_scan(scan, config, top)
+    if not any(r.market_open for r in scan.rows):
+        print("Mercados fechados (sem velas novas) — nada enviado ao painel")
+        return 0
+    if dashboard is not None:
+        return 0 if send_scan(scan, config, dashboard) else 1
+    return 0
 
 
 def _seconds_to_next(minutes: float) -> float:

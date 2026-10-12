@@ -143,7 +143,7 @@ class Mt5Scanner:
                 rows.extend(group_rows)
         wanted = self.cfg.gemini.analyze_watchlists
         analyze_many(self.analyst, [(r, f"mt5:{r.symbol}:{side_word(r.direction)}", "mt5", mt5_context(r, now))
-                                    for r in rows if r.watchlist in wanted or r.alerts])
+                                    for r in rows if r.market_open and (r.watchlist in wanted or r.alerts)])
         rows.sort(key=lambda r: (-len(r.alerts), "AB-".index(r.watchlist), -r.score.total))
         scan = Mt5Scan(now, int((time.monotonic() - started) * 1000), rows, regimes, errors)
         log.info("varredura MT5 concluída", extra={"data": {
