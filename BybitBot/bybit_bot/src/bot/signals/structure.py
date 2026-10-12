@@ -33,6 +33,8 @@ from bot.signals.ote_fibo import Pivot, find_pivots
 
 TREND_LABEL = {1: "alta", -1: "baixa", 0: "lateral"}
 MAX_TOUCH_LOOKBACK = 6   # pivôs anteriores examinados para contar toques na reta
+READING_NOTE = ("📐 Leitura descritiva: entrar mecanicamente nesses gatilhos (BOS, CHoCH, LTB, cunha, "
+                "médias) não mostrou vantagem no backtest intraday 15m/1H (12/10/2026) — use como apoio")
 EVENT_COLUMNS = ("bos_up", "bos_down", "choch_up", "choch_down", "lta_break", "ltb_break",
                  "wedge_up", "wedge_down", "cross_up", "cross_down")
 VALUE_COLUMNS = ("close", "atr", "ema_fast", "ema_slow", "ema_mid", "ema_long", "trend", "ma_align",
@@ -292,4 +294,4 @@ def structure_reading(trig: pd.DataFrame, ctx: pd.DataFrame, params: StructurePa
         return []
     t = row_at(structure_arrays(trig, params), len(trig) - 1)
     c = row_at(structure_arrays(ctx, params), len(ctx) - 1)
-    return ["📐 " + line for line in reading_lines(t, c, tf, ctx_tf)]
+    return ["📐 " + line for line in reading_lines(t, c, tf, ctx_tf)] + [READING_NOTE]

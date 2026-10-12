@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sem-score", action="store_true", help="qualquer ativo do universo pode gerar sinal")
     parser.add_argument("--alvo-fixo", type=float, default=None, help="alvo único em R (fecha tudo no alvo)")
     parser.add_argument("--contexto", choices=["dow_e_media", "dow", "media"], default=None)
+    parser.add_argument("--pivot-bars", type=int, default=None, help="velas de cada lado do topo/fundo (estrutura)")
     args = parser.parse_args(argv)
 
     config = load_config()
@@ -65,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
         config = config.model_copy(update={"risk": config.risk.model_copy(update={"max_drawdown_from_peak_pct": 100})})
     if args.sem_score:
         config = config.model_copy(update={"setups": config.setups.model_copy(update={"require_watchlist": "todas"})})
+    if args.pivot_bars is not None:
+        config = config.model_copy(update={"setups": config.setups.model_copy(update={
+            "estrutura": config.setups.estrutura.model_copy(update={"pivot_bars": args.pivot_bars})})})
     if args.contexto:
         config = config.model_copy(update={"setups": config.setups.model_copy(update={
             "estrutura": config.setups.estrutura.model_copy(update={"context": args.contexto})})})
