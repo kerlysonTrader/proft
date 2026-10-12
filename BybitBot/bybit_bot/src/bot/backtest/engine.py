@@ -36,8 +36,9 @@ from bot.indicators import atr
 from bot.logging_setup import get_logger
 from bot.risk.risk_manager import OpenExposure, RiskManager
 from bot.scanner.features import FEATURE_COLUMNS, Features, feature_frame
-from bot.scanner.regime import RegimeState, breadth_pct, evaluate_regime
+from bot.scanner.regime import Regime, RegimeState, breadth_pct, evaluate_regime
 from bot.scanner.scoring import classify, score_features
+from bot.signals.direction import invert_frame
 from bot.signals.engine import evaluate_setups
 from bot.signals.filters import SignalContext, check_filters
 from bot.storage.kline_store import KlineStore
@@ -67,11 +68,14 @@ class SymbolData:
     atr_trig: np.ndarray
     ctx: pd.DataFrame               # velas de contexto dos setups (4H ou 1H)
     ctx_ends: np.ndarray
+    h4_end_set: frozenset = frozenset()  # fechamentos 4H (no MT5 ficam fora da grade UTC de 4 em 4 h)
+    fee_rate: float | None = None   # custo por lado específico do ativo (MT5: spread); None = config
 
     def features_at(self, i: int) -> Features:
         values = dict(zip(self.columns, self.features[i], strict=True))
         values.pop("turnover_24h", None)
         values["daily_candles"] = int(values["daily_candles"])
+        values["no_benchmark"] = bool(values["no_benchmark"])
         return Features(symbol=self.symbol, **values)
 
     def value(self, i: int, column: str) -> float:
@@ -122,11 +126,13 @@ class BacktestResult:
     block_reasons: Counter = field(default_factory=Counter)
 
 
-def load_symbol(store: KlineStore, symbol: str, base: str, btc_d1: pd.DataFrame | None, config: Any
-                ) -> SymbolData | None:
-    h1 = klines_to_frame(store.load(symbol, "60"))
-    h4 = klines_to_frame(store.load(symbol, "240"))
-    d1 = klines_to_frame(store.load(symbol, "D"))
+def load_symbol(store: KlineStore, symbol: str, base: str, btc_d1: pd.DataFrame | None, config: Any,
+                invert: bool = False, fee_rate: float | None = None) -> SymbolData | None:
+    """btc_d1: diário da referência (None = o próprio ativo; vazio = sem referência).
+    invert=True: gráfico invertido (1/preço) para estudar as VENDAS com as mesmas regras."""
+    h1 = _maybe_invert(klines_to_frame(store.load(symbol, "60")), invert)
+    h4 = _maybe_invert(klines_to_frame(store.load(symbol, "240")), invert)
+    d1 = _maybe_invert(klines_to_frame(store.load(symbol, "D")), invert)
     if len(h1) < 200 or len(h4) < 50 or len(d1) < 30:
         return None
     btc = d1 if btc_d1 is None else btc_d1
@@ -135,7 +141,7 @@ def load_symbol(store: KlineStore, symbol: str, base: str, btc_d1: pd.DataFrame 
     frame = frame.reindex(columns=columns)
     ends = (h1["start_ms"].to_numpy() + H).tolist()
     trigger, context = config.setups.trigger_interval, config.setups.context_interval
-    trig = h1 if trigger == "60" else klines_to_frame(store.load(symbol, trigger))
+    trig = h1 if trigger == "60" else _maybe_invert(klines_to_frame(store.load(symbol, trigger)), invert)
     if len(trig) < 200:
         return None
     step = KLINE_INTERVAL_MS[trigger]
@@ -151,7 +157,12 @@ def load_symbol(store: KlineStore, symbol: str, base: str, btc_d1: pd.DataFrame 
         trig_ohlc={c: trig[c].to_numpy(dtype=float) for c in ("open", "high", "low", "close")},
         atr_trig=atr(trig, config.indicators.atr_period).to_numpy(),
         ctx=ctx, ctx_ends=ctx["start_ms"].to_numpy() + KLINE_INTERVAL_MS[context],
+        h4_end_set=frozenset(int(t) for t in (h4["start_ms"].to_numpy() + H4)), fee_rate=fee_rate,
     )
+
+
+def _maybe_invert(df: pd.DataFrame, invert: bool) -> pd.DataFrame:
+    return invert_frame(df) if invert else df
 
 
 class Backtester:
@@ -159,7 +170,7 @@ class Backtester:
                  progress: Callable[[int, int], None] | None = None) -> None:
         self.cfg = config
         self.data = data
-        self.btc = data[config.regime.btc_symbol]
+        self.btc = data.get(config.regime.btc_symbol)  # None = mercado sem referência (sem filtro de regime)
         self.start_ms, self.end_ms = start_ms, end_ms
         self.progress = progress
         bt = config.backtest
@@ -214,9 +225,13 @@ class Backtester:
         if pos.exit_reason in STOP_REASONS:
             self.last_stop_ms[pos.symbol] = pos.closed_ms or 0
 
+    def _fee(self, symbol: str) -> float:
+        rate = self.data[symbol].fee_rate
+        return self.fee if rate is None else rate
+
     def _apply_fills(self, pos: Position, fills) -> None:
         for f in fills:
-            self.cash += f.qty * f.price * (1 - self.fee)
+            self.cash += f.qty * f.price * (1 - pos.fee_rate)
         if pos.closed:
             del self.positions[pos.symbol]
             self._record(pos)
@@ -233,10 +248,11 @@ class Backtester:
                     price = min(s.entry, o)
                     qty = order.notional / s.entry  # o caixa reservado define a quantidade
                     self.reserved -= order.notional
-                    self.cash += order.notional - qty * price * (1 + self.fee)
+                    fee = self._fee(sym)
+                    self.cash += order.notional - qty * price * (1 + fee)
                     del self.pending[sym]
                     pos = Position(sym, s.setup, price, qty, s.stop, s.tp1, s.tp2, ts, s.order_link_id, s.score,
-                                   order.regime, self.fee)
+                                   order.regime, fee)
                     self.positions[sym] = pos
                     if low <= pos.stop:  # mesma vela tocou o stop: conservador
                         self._apply_fills(pos, [pos._exit(pos.qty_open, pos.stop * (1 - self.slip / 100),
@@ -268,7 +284,7 @@ class Backtester:
             lows = sd.trig_ohlc["low"][max(0, i - 9):i + 1].tolist()
             below_ema = False
             hour = self._row(sd, ts)
-            if ts % H4 == 0 and hour is not None:
+            if hour is not None and ts in sd.h4_end_set:
                 c4, e50 = sd.value(hour, "close_4h"), sd.value(hour, "ema50_4h")
                 below_ema = bool(c4 < e50) if not (np.isnan(c4) or np.isnan(e50)) else False
             fill = on_candle_close(pos, close=close, recent_lows=lows, atr_1h=float(sd.atr_trig[i]), ts_ms=ts,
@@ -296,6 +312,11 @@ class Backtester:
         above = [f.close_4h > f.ema50_4h for _, _, f in coins if not (np.isnan(f.close_4h) or np.isnan(f.ema50_4h))]
         b = self.btc
         bt = cfg.backtest.candles
+        if b is None:  # sem ativo de referência: sem filtro de regime
+            regime = Regime("risk_on", None, None, breadth_pct(above), None, False, None,
+                            ["Mercado sem ativo de referência: sem filtro de regime"])
+            return regime, [(sym, i, s, classify(s.total, sc, regime.regime))
+                            for sym, i, f in coins for s in [score_features(f, sc)]]
         regime = evaluate_regime(self._slice(b.d1, b.d1_ends, ts, bt.d1_btc), self._slice(b.h4, b.h4_ends, ts, bt.h4),
                                  self._slice(b.h1, b.h1["start_ms"].to_numpy() + H, ts, 200), breadth_pct(above),
                                  self.regime_state, ts, cfg.regime)
@@ -353,7 +374,9 @@ class Backtester:
 
     # ------------------------------------------------------------------ loop
     def run(self) -> BacktestResult:
-        steps = [int(t) for t in self.btc.trig_ends if self.start_ms <= t <= self.end_ms]
+        grid = self.btc.trig_ends if self.btc is not None else np.unique(
+            np.concatenate([sd.trig_ends for sd in self.data.values()]))
+        steps = [int(t) for t in grid if self.start_ms <= t <= self.end_ms]
         regime, scored = None, []
         for n, ts in enumerate(steps):
             self._process_orders(ts)

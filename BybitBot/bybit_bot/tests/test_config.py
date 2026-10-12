@@ -73,6 +73,8 @@ def test_categoria_diferente_de_spot_e_rejeitada(raw):
         (("mode",), "real", "mode"),
         (("timezone",), "Marte/Olympus", "fuso horário"),
         (("bybit", "rest_url", "demo"), "http://api-demo.bybit.com", "https"),
+        (("markets", "mt5", "stop_pct_range", "forex"), [0.8, 0.06], "menor que o máximo"),
+        (("markets", "mt5", "stop_pct_range", "cripto"), [0.1, 1.0], "grupo desconhecido"),
     ],
 )
 def test_valores_incoerentes_sao_rejeitados(raw, path, value, fragment):

@@ -328,3 +328,46 @@ def test_sem_plano_quando_score_nao_atende(cfg):
     h1 = candles(path(pullback_closes()))
     assert entry_plans(h1, h4_for(h1), {"trend": 10, "squeeze": 2}, end_ms(h1), cfg) == []
     assert plan_lines([], cfg.setups.common, cfg.exits)[0].startswith("Plano: nenhum setup")
+
+
+# ------------------------------------------------------------------ venda pelo gráfico invertido
+def test_grafico_invertido():
+    from bot.signals.direction import invert_frame
+
+    df = candles([(100, 110, 90, 105)])
+    inv = invert_frame(df)
+    row = inv.iloc[0]
+    assert row["open"] == pytest.approx(1 / 100) and row["close"] == pytest.approx(1 / 105)
+    assert row["high"] == pytest.approx(1 / 90) and row["low"] == pytest.approx(1 / 110)
+    assert row["high"] >= max(row["open"], row["close"]) >= min(row["open"], row["close"]) >= row["low"]
+
+
+def test_queda_vira_alta_e_o_setup_encontra_a_venda(cfg):
+    from bot.signals.direction import invert_frame, to_short
+
+    # espelho do caso de pullback que dispara: preço em queda com repique e confirmação para baixo
+    closes = [1 / c for c in pullback_closes()]
+    h1 = candles(path(closes))
+    inv = invert_frame(h1)
+    long_on_inverted = run_pullback(cfg, inv)
+    assert long_on_inverted is not None
+    short = to_short(long_on_inverted, cfg.exits)
+    assert short.direction == -1 and short.side == "Venda"
+    assert short.stop > short.entry > short.tp1 > short.tp2
+    assert short.risk > 0
+    assert short.rr == pytest.approx(cfg.exits.tp2_r)  # alvos recalculados no preço real
+    assert short.entry == pytest.approx(1 / long_on_inverted.entry)
+    assert short.stop == pytest.approx(1 / long_on_inverted.stop)
+    raw = to_short(long_on_inverted)  # sem exits: só converte (1/x distorce alvos distantes)
+    assert raw.tp2 == pytest.approx(1 / long_on_inverted.tp2)
+    assert short.order_link_id.split("-")[1] == "pbs"
+    assert short.reasons[0].startswith("Venda pelo gráfico invertido")
+
+
+def test_filtros_valem_para_venda(cfg):
+    sell = make_signal(entry=100.0, stop=103.0, tp1=95.5, tp2=91.0, direction=-1)
+    ctx = SignalContext(now_ms=1_000 * H, spread_pct={"XUSDT": 0.05})
+    assert sell.rr == pytest.approx(3.0) and sell.stop_pct == pytest.approx(3.0)
+    assert check_filters(sell, ctx, cfg.setups.common, 0.15) == []
+    wrong = make_signal(entry=100.0, stop=97.0, tp1=95.5, tp2=91.0, direction=-1)  # stop do lado errado
+    assert any("R:R" in p for p in check_filters(wrong, ctx, cfg.setups.common, 0.15))

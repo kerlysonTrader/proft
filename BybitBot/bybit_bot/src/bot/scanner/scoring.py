@@ -76,7 +76,18 @@ def score_features(f: Features, sc) -> ScoreResult:
     s.award("trend", f.adx_4h > sc.adx_min and f.plus_di_4h > f.minus_di_4h, p.trend.adx_trend_4h,
             f"ADX 4H {f.adx_4h:.0f} > {sc.adx_min:g} com DI+ > DI−", (f.adx_4h, f.plus_di_4h, f.minus_di_4h))
 
-    # B. Força relativa contra o BTC
+    # B. Força relativa contra o BTC (ou o ativo de referência do mercado)
+    if f.no_benchmark:
+        s.r.components["relative_strength"] = sc.relative_strength_neutral_points
+        neutral = _fmt(sc.relative_strength_neutral_points)
+        s.r.reasons.append(f"Sem ativo de referência: força relativa neutra ({neutral})")
+    else:
+        _relative_strength(s, f, sc, p)
+    _rest_of_score(s, f, sc, p)
+    return s.r
+
+
+def _relative_strength(s: _Scorer, f: Features, sc, p) -> None:
     s.award("relative_strength", f.ret_short - f.btc_ret_short > 0, p.relative_strength.ret_short_vs_btc,
             f"Retorno {sc.rs_short_days}d acima do BTC ({_pct((f.ret_short - f.btc_ret_short) * 100)})",
             (f.ret_short, f.btc_ret_short))
@@ -86,6 +97,8 @@ def score_features(f: Features, sc) -> ScoreResult:
     s.award("relative_strength", f.ratio_btc > f.ratio_btc_ema, p.relative_strength.ratio_above_ema_1d,
             f"Razão moeda/BTC acima da EMA{sc.ratio_ema_period} diária", (f.ratio_btc, f.ratio_btc_ema))
 
+
+def _rest_of_score(s: _Scorer, f: Features, sc, p) -> None:
     # C. Volume e acumulação
     low, high = sc.volume_ratio_band
     s.award("volume", low <= f.volume_ratio <= high, p.volume.volume_ratio_in_band,
@@ -143,7 +156,6 @@ def score_features(f: Features, sc) -> ScoreResult:
     s.penalize(f.max_upper_wick_fraction_1d > sc.upper_wick_max_fraction, pen.upper_wick_rejection_1d,
                f"Pavio superior de {f.max_upper_wick_fraction_1d * 100:.0f}% do range numa das últimas "
                f"{sc.wick_lookback_days} velas diárias (rejeição)", (f.max_upper_wick_fraction_1d,))
-    return s.r
 
 
 def classify(total: float, sc, regime: str) -> str:

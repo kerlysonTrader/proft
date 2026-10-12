@@ -17,6 +17,8 @@ import argparse
 import json
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from bot.bybit.client import KLINE_INTERVAL_MS, BybitClient
@@ -64,7 +66,7 @@ def select_top_symbols(
 
 
 def download_symbol(md: MarketData, store: KlineStore, symbol: str, interval: str, start_ms: int,
-                    now_ms: int) -> dict[str, Any]:
+                    now_ms: int, category: str = "spot") -> dict[str, Any]:
     """Baixa [start_ms, última vela fechada]; se já houver dados cobrindo o início, só o final."""
     step = KLINE_INTERVAL_MS[interval]
     last_closed = md.last_closed_start(interval, now_ms)
@@ -74,11 +76,28 @@ def download_symbol(md: MarketData, store: KlineStore, symbol: str, interval: st
         fetch_from = last + step
     fetched = []
     if fetch_from <= last_closed:
-        fetched = [k for k in md.fetch_range(symbol, interval, fetch_from, last_closed) if k.end_ms <= now_ms]
+        fetched = [k for k in md.fetch_range(symbol, interval, fetch_from, last_closed, category)
+                   if k.end_ms <= now_ms]
         store.upsert(fetched)
     first, last, count = store.bounds(symbol, interval)
     return {"symbol": symbol, "interval": interval, "new": len(fetched), "count": count, "first_ms": first,
             "last_ms": last}
+
+
+def symbols_file(db_path: Path) -> Path:
+    """Lista de moedas ao lado do banco: history.db -> history_symbols.json."""
+    return db_path.with_name(f"{db_path.stem}_symbols.json")
+
+
+def linear_registry(client: BybitClient, quote: str) -> InstrumentRegistry:
+    """Perpétuos lineares em `quote` (sem futuros com vencimento), no formato usado pela seleção."""
+    rules = {}
+    for item in client.get_instruments_info(category="linear"):
+        if item.get("quoteCoin") != quote or item.get("contractType") != "LinearPerpetual":
+            continue
+        rules[item["symbol"]] = SimpleNamespace(symbol=item["symbol"], base_coin=item.get("baseCoin", ""),
+                                                 trading=item.get("status") == "Trading")
+    return InstrumentRegistry(rules)
 
 
 def _date(ms: int | None) -> str:
@@ -92,19 +111,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--months", type=int, default=hist.months)
     parser.add_argument("--top-n", type=int, default=hist.top_n)
     parser.add_argument("--intervals", default=",".join(hist.intervals))
-    parser.add_argument("--db", default=hist.db_path)
+    parser.add_argument("--db", default=None, help="padrão: history.db (spot) ou history_perp.db (linear)")
+    parser.add_argument("--category", choices=["spot", "linear"], default="spot",
+                        help="spot ou perpétuos lineares USDT (só dados públicos)")
     args = parser.parse_args(argv)
     setup_logging(config.logging.level)
 
     intervals = [i.strip() for i in args.intervals.split(",") if i.strip()]
-    db_path = resolve_path(args.db)
+    default_db = hist.db_path if args.category == "spot" else hist.db_path.replace(".db", "_perp.db")
+    db_path = resolve_path(args.db or default_db)
     client = BybitClient.from_config(config, secrets=None, mode="paper")  # só dados públicos
     md = MarketData(client, config.market_data)
     store = KlineStore(db_path)
 
-    registry = InstrumentRegistry.load(client, quote=config.bybit.quote)
-    chosen = select_top_symbols(md.spot_tickers(), registry, config.universe, args.top_n,
-                                config.regime.btc_symbol)
+    if args.category == "spot":
+        registry = InstrumentRegistry.load(client, quote=config.bybit.quote)
+        tickers = md.spot_tickers()
+    else:
+        registry = linear_registry(client, config.bybit.quote)
+        tickers = md.linear_tickers()
+    chosen = select_top_symbols(tickers, registry, config.universe, args.top_n, config.regime.btc_symbol)
     client.sync_time()
     now_ms = client.now_ms()
     start_ms = now_ms - args.months * MONTH_MS
@@ -115,17 +141,19 @@ def main(argv: list[str] | None = None) -> int:
     for symbol, _turnover in chosen:
         for interval in intervals:
             try:
-                rows.append(download_symbol(md, store, symbol, interval, start_ms, now_ms))
+                rows.append(download_symbol(md, store, symbol, interval, start_ms, now_ms, args.category))
             except Exception as exc:  # uma moeda com problema não derruba o download
                 log.error("falha no download", extra={"symbol": symbol,
                                                       "data": {"interval": interval, "error": str(exc)}})
                 rows.append({"symbol": symbol, "interval": interval, "new": 0, "count": 0, "first_ms": None,
                              "last_ms": None, "error": str(exc)})
 
-    selection_path = db_path.with_name("history_symbols.json")
+    selection_path = symbols_file(db_path)
     selection_path.write_text(json.dumps({
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "criterion": f"top {args.top_n} por turnover24h spot/USDT no dia do download (viés de sobrevivência)",
+        "criterion": f"top {args.top_n} por turnover24h {args.category}/USDT no dia do download "
+                     "(viés de sobrevivência)",
+        "category": args.category,
         "symbols": [{"symbol": s, "turnover24h": t} for s, t in chosen],
     }, indent=2), encoding="utf-8")
 

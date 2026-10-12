@@ -77,10 +77,11 @@ def hour_context(config: Any, data1h: dict[str, SymbolData], start_ms: int, end_
 
 class BullBacktester:
     def __init__(self, config: Any, data15: dict[str, pd.DataFrame], start_ms: int, end_ms: int,
-                 params: BullParams, ctx: HourContext | None) -> None:
+                 params: BullParams, ctx: HourContext | None, fees: dict[str, float] | None = None) -> None:
         self.cfg, self.data15, self.p, self.ctx = config, data15, params, ctx
         self.start_ms, self.end_ms = start_ms, end_ms
         self.fee = config.costs.fee_rate_per_side
+        self.fees = fees or {}
         self.slip = config.costs.backtest_slippage_pct
         self.cash = config.backtest.initial_equity_usdt
         self.risk = RiskManager(config.risk, self.cash)
@@ -135,17 +136,18 @@ class BullBacktester:
                 del self.pending[sym]
                 o, h, low, _ = bar
                 price = o * (1 + self.slip / 100)
+                fee = self.fees.get(sym, self.fee)
                 if price <= sig.sl or price >= sig.tp:
                     self.counters["entrada desistida (abriu além do stop/alvo)"] += 1
                     continue
-                cost = qty * price * (1 + self.fee)
+                cost = qty * price * (1 + fee)
                 if cost > self.cash:
-                    qty = self.cash / (price * (1 + self.fee))
+                    qty = self.cash / (price * (1 + fee))
                     cost = self.cash
                 if qty * price < self.cfg.risk.min_order_notional_usdt:
                     continue
                 self.cash -= cost
-                pos = Position(sym, SETUP, price, qty, sig.sl, sig.tp, sig.tp, end, fee_rate=self.fee, regime=regime)
+                pos = Position(sym, SETUP, price, qty, sig.sl, sig.tp, sig.tp, end, fee_rate=fee, regime=regime)
                 self.positions[sym] = pos
                 fills = process_candle(pos, price, h, low, end, BULL_EXITS, self.slip)
                 self._close_fills(pos, fills)
@@ -208,7 +210,7 @@ class BullBacktester:
 
     def _close_fills(self, pos: Position, fills) -> None:
         for f in fills:
-            self.cash += f.qty * f.price * (1 - self.fee)
+            self.cash += f.qty * f.price * (1 - pos.fee_rate)
         if pos.closed and pos.symbol in self.positions:
             del self.positions[pos.symbol]
             self._record(pos)

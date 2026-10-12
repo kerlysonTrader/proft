@@ -34,15 +34,21 @@ class Signal:
     reasons: tuple[str, ...] = field(default_factory=tuple)
     extra: dict = field(default_factory=dict)  # ex.: tp3 do ote_fibo, nível rompido
     interval_ms: int = 3_600_000  # duração da vela do gatilho
+    direction: int = 1            # +1 compra, −1 venda (stop acima e alvos abaixo da entrada)
+
+    @property
+    def side(self) -> str:
+        return "Compra" if self.direction > 0 else "Venda"
 
     @property
     def risk(self) -> float:
-        return self.entry - self.stop
+        """Distância até o stop no sentido do trade (positiva quando o sinal é coerente)."""
+        return (self.entry - self.stop) * self.direction
 
     @property
     def rr(self) -> float:
         """R:R até o TP2."""
-        return (self.tp2 - self.entry) / self.risk if self.risk > 0 else float("nan")
+        return (self.tp2 - self.entry) * self.direction / self.risk if self.risk > 0 else float("nan")
 
     @property
     def stop_pct(self) -> float:
@@ -56,7 +62,8 @@ class Signal:
     @property
     def order_link_id(self) -> str:
         stamp = datetime.fromtimestamp(self.candle_start_ms / 1000, tz=UTC).strftime("%Y%m%d%H%M")
-        return f"{self.symbol}-{SETUP_CODES[self.setup]}-{stamp}"[:36]
+        code = SETUP_CODES[self.setup] + ("" if self.direction > 0 else "s")
+        return f"{self.symbol}-{code}-{stamp}"[:36]
 
 
 def closed_only(df: pd.DataFrame, interval: str, now_ms: int) -> pd.DataFrame:

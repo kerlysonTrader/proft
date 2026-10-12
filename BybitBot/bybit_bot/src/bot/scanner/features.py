@@ -58,6 +58,7 @@ class Features:
     change_24h_pct: float = NAN
     # derivativos (None = sem perpétuo)
     derivatives: DerivativesSnapshot | None = None
+    no_benchmark: bool = False      # sem ativo de referência (forex/metais/energia): força relativa neutra
 
     @property
     def atr_pct_4h(self) -> float:
@@ -89,7 +90,8 @@ def compute_features(
     ind,   # IndicatorsConfig
     sc,    # ScoreConfig
 ) -> Features:
-    values: dict[str, float | int | DerivativesSnapshot | None] = {"symbol": symbol, "derivatives": derivatives}
+    values: dict[str, float | int | DerivativesSnapshot | None] = {"symbol": symbol, "derivatives": derivatives,
+                                                                    "no_benchmark": len(btc_d1) == 0}
 
     if len(h4):
         c4 = h4["close"]
@@ -238,6 +240,7 @@ def feature_frame(d1: pd.DataFrame, h4: pd.DataFrame, h1: pd.DataFrame, btc_d1: 
         out["volume_ratio"] = turnover_24h / out["avg_daily_turnover"].where(out["avg_daily_turnover"] > 0)
         out["turnover_24h"] = turnover_24h
         out = out.drop(columns=["avg_daily_turnover"])
+    out["no_benchmark"] = 0.0 if len(btc_d1) else 1.0
     for column in FEATURE_COLUMNS:
         if column not in out:
             out[column] = 0 if column == "daily_candles" else NAN
@@ -245,7 +248,8 @@ def feature_frame(d1: pd.DataFrame, h4: pd.DataFrame, h1: pd.DataFrame, btc_d1: 
 
 
 def features_from_row(symbol: str, row: pd.Series, derivatives: DerivativesSnapshot | None = None) -> Features:
-    values = {k: (int(row[k]) if k == "daily_candles" else float(row[k])) for k in FEATURE_COLUMNS}
+    values = {k: (int(row[k]) if k == "daily_candles" else bool(row[k]) if k == "no_benchmark" else float(row[k]))
+              for k in FEATURE_COLUMNS}
     return Features(symbol=symbol, derivatives=derivatives, **values)
 
 

@@ -22,6 +22,7 @@ from bot.backtest.walk_forward import walk_forward_windows
 from bot.config import PROJECT_ROOT, load_config, resolve_path
 from bot.data.market_data import klines_to_frame
 from bot.logging_setup import setup_logging
+from bot.signals.direction import invert_frame
 from bot.storage.kline_store import KlineStore
 
 
@@ -33,6 +34,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-kill-switch", action="store_true", help="PESQUISA: desliga o kill switch")
     parser.add_argument("--min-channel-pct", type=float, default=0.24)
     parser.add_argument("--n-candles", type=int, default=4)
+    parser.add_argument("--market", choices=["spot", "perp", "mt5"], default="spot")
+    parser.add_argument("--group", default=None, help="grupo do MT5 (metais, forex, indices, energia)")
+    parser.add_argument("--short", action="store_true", help="estuda as VENDAS (gráfico invertido)")
     args = parser.parse_args(argv)
 
     config = load_config()
@@ -43,26 +47,52 @@ def main(argv: list[str] | None = None) -> int:
                         use_universe=not args.no_universe, use_regime=not args.no_regime)
 
     t0 = time.monotonic()
-    db_path = resolve_path(config.market_data.history.db_path)
+    fees: dict[str, float] = {}
+    if args.market == "mt5":
+        mcfg = config.markets.mt5
+        if args.group and args.group not in mcfg.groups:
+            print(f"Informe --group entre: {', '.join(mcfg.groups)}")
+            return 1
+        db_path = resolve_path(mcfg.history_db)
+        meta = [m for m in json.loads(db_path.with_name(f"{db_path.stem}_symbols.json").read_text(
+            encoding="utf-8"))["symbols"] if not args.group or m["group"] == args.group]
+        symbols = [m["symbol"] for m in meta]
+        fees = {m["symbol"]: m["spread_pct"] / 100 / 2 * mcfg.spread_cost_multiplier
+                + mcfg.commission_per_side_pct / 100 for m in meta}
+        params.use_universe = params.use_regime = False  # sem universo/regime de cripto no MT5
+    else:
+        if args.market == "perp":
+            db_path = resolve_path(config.markets.cripto_perp.history_db)
+            config = config.model_copy(update={"costs": config.costs.model_copy(
+                update={"fee_rate_per_side": config.markets.cripto_perp.fee_rate_per_side})})
+        else:
+            db_path = resolve_path(config.market_data.history.db_path)
+        symbols = [s["symbol"] for s in json.loads(db_path.with_name(f"{db_path.stem}_symbols.json").read_text(
+            encoding="utf-8"))["symbols"]]
     store = KlineStore(db_path)
-    symbols = [s["symbol"] for s in json.loads(db_path.with_name("history_symbols.json").read_text(
-        encoding="utf-8"))["symbols"]]
     data15 = {}
     for sym in symbols:
         df = klines_to_frame(store.load(sym, "15"))
+        df = invert_frame(df) if args.short else df
         if len(df) > 500:
             data15[sym] = df
     btc = config.regime.btc_symbol
-    btc1h = load_symbol(store, btc, "BTC", None, config)
-    data1h = {btc: btc1h}
-    if params.use_universe or params.use_regime:
+    ctx_needed = params.use_universe or params.use_regime
+    btc1h = load_symbol(store, btc, "BTC", None, config, invert=args.short) if ctx_needed else None
+    data1h = {btc: btc1h} if btc1h else {}
+    if ctx_needed:
         for sym in data15:
             if sym != btc:
-                sd = load_symbol(store, sym, sym.removesuffix(config.bybit.quote), btc1h.d1, config)
+                sd = load_symbol(store, sym, sym.removesuffix(config.bybit.quote), btc1h.d1, config,
+                                 invert=args.short)
                 if sd:
                     data1h[sym] = sd
     store.close()
-    first = max(int(btc1h.h1["start_ms"].iloc[0]) + config.backtest.warmup_days * 86_400_000,
+    if not data15:
+        print("Nenhum ativo com histórico de 15m suficiente")
+        return 1
+    origin = int(btc1h.h1["start_ms"].iloc[0]) if btc1h else min(int(df["start_ms"].iloc[0]) for df in data15.values())
+    first = max(origin + config.backtest.warmup_days * 86_400_000,
                 min(int(df["start_ms"].iloc[0]) for df in data15.values()))
     last = max(int(df["start_ms"].iloc[-1]) for df in data15.values())
     print(f"{len(data15)} moedas com 15m; {datetime.fromtimestamp(first / 1000, UTC):%d/%m/%Y} a "
@@ -71,7 +101,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ctx = hour_context(config, data1h, first, last) if (params.use_universe or params.use_regime) else None
     print(f"contexto por hora pronto em {time.monotonic() - t0:.0f} s", flush=True)
-    result = BullBacktester(config, data15, first, last, params, ctx).run()
+    result = BullBacktester(config, data15, first, last, params, ctx, fees).run()
+    if args.short:
+        result.notes.append("VENDAS estudadas no gráfico invertido (1/preço): o R é medido nessa escala")
     windows = walk_forward_windows(result, config.backtest.walk_forward)
     report = render_markdown(result, config, windows, title=f"Backtest Bull 15m — {args.label}")
     stamp = datetime.now(UTC).strftime("%Y%m%d")

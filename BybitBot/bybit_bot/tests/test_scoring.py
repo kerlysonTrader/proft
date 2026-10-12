@@ -157,3 +157,11 @@ def test_features_vazias_nao_quebram(sc):
 )
 def test_classificacao(sc, total, regime, expected):
     assert classify(total, sc, regime) == expected
+
+
+def test_sem_ativo_de_referencia_forca_relativa_neutra(sc):
+    r = score_features(perfect(no_benchmark=True, ret_short=NAN, ret_long=NAN, btc_ret_short=NAN,
+                               btc_ret_long=NAN, ratio_btc=NAN, ratio_btc_ema=NAN), sc)
+    assert r.components["relative_strength"] == sc.relative_strength_neutral_points
+    assert any("Sem ativo de referência" in x for x in r.reasons)
+    assert not any("BTC" in m for m in r.missing)

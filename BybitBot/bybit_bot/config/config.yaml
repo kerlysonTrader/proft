@@ -41,6 +41,34 @@ market_data:
     top_n: 50                     # moedas de maior volume 24h (mais o BTC)
     intervals: ["60", "240", "D"] # 1H, 4H, 1D
 
+markets:                          # mercados além do cripto spot (scanner/assistente: quem executa é o usuário)
+  cripto_perp:                    # perpétuos lineares USDT da Bybit
+    enabled: true
+    directions: [long, short]
+    fee_rate_per_side: 0.00055    # taxa taker VIP0 (ordens limite pagam 0,02 %); conservador no backtest
+    history_db: data/history_perp.db
+  mt5:                            # MT5 da corretora (Doo) — SOMENTE LEITURA de preços; roda no PC com o MT5 aberto
+    enabled: true
+    server_utc_offset_hours: 3    # fuso do servidor (conferido pelo último tick; usado se o mercado estiver fechado)
+    history_db: data/history_mt5.db
+    max_bars: 100000              # limite do terminal ("máx. barras no gráfico")
+    directions: [long, short]
+    spread_cost_multiplier: 1.0   # custo por lado = metade do spread típico × multiplicador + comissão
+    commission_per_side_pct: 0.0
+    groups:
+      metais: [XAUUSD.s, XAGUSD.s, XPTUSD.s, XCUUSD.s]
+      forex: [EURUSD.s, GBPUSD.s, USDJPY.s, AUDUSD.s, USDCAD.s, USDCHF.s, NZDUSD.s, EURJPY.s, GBPJPY.s,
+              EURGBP.s, AUDJPY.s, EURAUD.s]
+      indices: [NAS100.s, SP500.s, US30.s, GER40.s, UK100.s, JPN225.s]
+      energia: [XTIUSD.s, XBRUSD.s, XNGUSD.s]
+    benchmarks:                   # referência de regime e força relativa por grupo (sem referência = neutro)
+      indices: SP500.s
+    stop_pct_range:               # faixa de stop (%) por grupo; a do cripto (1,5–8 %) não serve: ouro/forex
+      metais: [0.15, 2.0]         # oscilam 5–20× menos (ATR 15m mediano: ouro 0,13 %, EURUSD 0,05 %)
+      forex: [0.06, 0.8]
+      indices: [0.15, 2.0]
+      energia: [0.25, 3.0]
+
 indicators:                       # períodos usados pelo score e pelos setups
   ema_short: 20
   ema_mid: 50
@@ -109,6 +137,7 @@ score:
   funding_hot_pct: 0.05
   max_long_short_ratio: 1.5
   derivatives_neutral_points: 5
+  relative_strength_neutral_points: 10  # ativos sem referência (forex, metais, energia no MT5): metade dos 20
   # pontos de cada condição (a soma por componente deve igualar weights) — seção 3 do 03_ESTRATEGIA.md
   points:
     trend: {price_above_ema50_4h: 7, ema50_above_ema200_4h: 7, price_above_ema50_1d: 5, adx_trend_4h: 6}

@@ -130,6 +130,48 @@ class MarketDataConfig(StrictModel):
     history: HistoryConfig
 
 
+Direction = Literal["long", "short"]
+
+
+class CryptoPerpConfig(StrictModel):
+    enabled: bool
+    directions: list[Direction]
+    fee_rate_per_side: Annotated[float, Field(ge=0, lt=0.01)]
+    history_db: str
+
+
+class Mt5Config(StrictModel):
+    enabled: bool
+    server_utc_offset_hours: Annotated[int, Field(ge=-12, le=14)]
+    history_db: str
+    max_bars: Annotated[int, Field(ge=1000, le=10_000_000)]
+    directions: list[Direction]
+    spread_cost_multiplier: NonNegFloat
+    commission_per_side_pct: NonNegFloat
+    groups: dict[str, list[str]]
+    benchmarks: dict[str, str]
+    stop_pct_range: dict[str, tuple[PositiveFloat, PositiveFloat]] = {}
+
+    @model_validator(mode="after")
+    def _benchmarks_in_groups(self) -> Mt5Config:
+        for group, symbol in self.benchmarks.items():
+            if group not in self.groups:
+                raise ValueError(f"markets.mt5.benchmarks: grupo desconhecido '{group}'")
+            if symbol not in self.groups[group]:
+                raise ValueError(f"markets.mt5.benchmarks: {symbol} não está no grupo {group}")
+        for group, (low, high) in self.stop_pct_range.items():
+            if group not in self.groups:
+                raise ValueError(f"markets.mt5.stop_pct_range: grupo desconhecido '{group}'")
+            if low >= high:
+                raise ValueError(f"markets.mt5.stop_pct_range.{group}: mínimo deve ser menor que o máximo")
+        return self
+
+
+class MarketsConfig(StrictModel):
+    cripto_perp: CryptoPerpConfig
+    mt5: Mt5Config
+
+
 class IndicatorsConfig(StrictModel):
     ema_short: PositiveInt
     ema_mid: PositiveInt
@@ -293,6 +335,7 @@ class ScoreConfig(StrictModel):
     funding_hot_pct: float
     max_long_short_ratio: PositiveFloat
     derivatives_neutral_points: NonNegFloat
+    relative_strength_neutral_points: NonNegFloat  # mercados sem ativo de referência
     points: ScorePoints
     penalties: ScorePenalties
     adx_min: NonNegFloat
@@ -716,6 +759,7 @@ class BotConfig(StrictModel):
     logging: LoggingConfig
     market_data: MarketDataConfig
     indicators: IndicatorsConfig
+    markets: MarketsConfig
     schedule: ScheduleConfig
     universe: UniverseConfig
     regime: RegimeConfig
