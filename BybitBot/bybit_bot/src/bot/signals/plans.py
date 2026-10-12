@@ -34,7 +34,7 @@ class Plan:
     tp2: float
     zone: tuple[float, float] | None
     trigger: str
-    price_vs_zone: str = ""   # aguardando | na_zona | contra (só no pullback)
+    price_vs_zone: str = ""   # aguardando | na_zona | contra | invalidado (preço já passou do stop)
     direction: int = 1        # 1 = compra, −1 = venda
 
     @property
@@ -85,7 +85,8 @@ def entry_plans(trig: pd.DataFrame, ctx: pd.DataFrame, components: dict[str, flo
             "pullback_tendencia", entry, stop, *_targets(entry, stop, exits), (low, high),
             f"vela {tl} fechando {up} da EMA20 com corpo ≥ {pb.min_body_fraction:.0%} e RSI {tl} "
             f"voltando {up} de {_br(rsi_level)}",
-            price_vs_zone="aguardando" if close > high else "contra" if close < low else "na_zona"), short))
+            price_vs_zone="invalidado" if close <= stop else "aguardando" if close > high
+            else "contra" if close < low else "na_zona"), short))
 
     bo = st.rompimento_compressao
     if components.get("squeeze", 0) >= bo.min_squeeze_points and len(ctx) >= bo.range_lookback_4h and atr_t == atr_t:
@@ -98,7 +99,8 @@ def entry_plans(trig: pd.DataFrame, ctx: pd.DataFrame, components: dict[str, flo
         plans.append(_finish(Plan(
             "rompimento_compressao", entry, stop, *_targets(entry, stop, exits), None,
             f"vela {tl} fechando {up} de {fmt_price(real_level)} com volume ≥ {_br(bo.breakout_volume_ratio)}× "
-            f"a média; {'venda' if short else 'compra'} no reteste"), short))
+            f"a média; {'venda' if short else 'compra'} no reteste",
+            price_vs_zone="invalidado" if close <= stop else ""), short))
     return plans
 
 
@@ -124,6 +126,11 @@ def plan_lines(plans: list[Plan], common: Any, exits: Any, footer: str | list[st
     for p in plans:
         short = p.direction < 0
         name = "Pullback" if p.setup == "pullback_tendencia" else "Rompimento"
+        if p.price_vs_zone == "invalidado":
+            lines.append(f"Plano {name}{' VENDA' if short else ''}: INVALIDADO — o preço já passou do stop estimado "
+                         f"({fmt_price(p.stop)}); só volta a valer se o preço "
+                         f"{'voltar abaixo' if short else 'voltar acima'} de {fmt_price(recover_level(p))}")
+            continue
         where = (f"zona de {'venda' if short else 'compra'} {fmt_price(p.zone[0])}–{fmt_price(p.zone[1])}" if p.zone
                  else f"entrada {fmt_price(p.entry)}")
         status = {
@@ -148,12 +155,21 @@ SETUP_NAMES = {"pullback_tendencia": "Pullback", "rompimento_compressao": "Rompi
                "cunha": "Cunha", "medias_cruzamento": "Cruzamento de médias"}
 
 
+def recover_level(p: Plan) -> float:
+    """Onde o preço precisa voltar para o plano valer de novo: a zona (pullback) ou a entrada."""
+    if p.zone:
+        return p.zone[0] if p.direction < 0 else p.zone[1]
+    return p.entry
+
+
 def plan_dict(p: Plan) -> dict[str, Any]:
     """Plano em números para o painel desenhar no gráfico (entrada, stop, alvos e zona)."""
+    invalid = p.price_vs_zone == "invalidado"
     return {"setup": SETUP_NAMES.get(p.setup, p.setup), "lado": "venda" if p.direction < 0 else "compra",
             "entrada": p.entry, "stop": p.stop, "tp1": p.tp1, "tp2": p.tp2,
             "zona": list(p.zone) if p.zone else None, "stop_pct": round(p.stop_pct, 3),
-            "situacao": p.price_vs_zone or None, "gatilho": p.trigger, "alerta": False}
+            "situacao": p.price_vs_zone or None, "gatilho": p.trigger, "alerta": False,
+            "retomada": recover_level(p) if invalid else None}
 
 
 def signal_dict(s: Any) -> dict[str, Any]:

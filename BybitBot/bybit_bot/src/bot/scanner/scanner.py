@@ -24,7 +24,7 @@ from bot.scanner.regime import Regime, RegimeState, breadth_pct, evaluate_regime
 from bot.scanner.scoring import ScoreResult, classify, score_features
 from bot.scanner.universe import UniverseCoin, build_universe
 from bot.signals.plans import entry_plans, plan_dict, plan_lines
-from bot.signals.structure import StructureParams, structure_reading
+from bot.signals.structure import StructureParams, structure_bundle
 
 log = get_logger("scanner")
 
@@ -44,6 +44,7 @@ class CoinResult:
     plan_data: list[dict[str, Any]] = field(default_factory=list)
     gemini: Analysis | None = None
     structure: list[str] = field(default_factory=list)
+    structure_data: dict[str, Any] | None = None
 
     @property
     def status(self) -> str:
@@ -151,7 +152,7 @@ class Scanner:
         for r in results:
             d = data[r.coin.symbol]
             if d.m15 is not None:
-                r.structure = structure_reading(d.m15, d.h1, params)
+                r.structure, r.structure_data = structure_bundle({"15m": d.m15, "1H": d.h1, "4H": d.h4}, params)
         analyze_many(self.analyst, [(r, f"cripto:{r.coin.symbol}", "cripto", crypto_context(r, regime, run_at))
                                     for r in results if r.watchlist in cfg.gemini.analyze_watchlists])
         results.sort(key=lambda r: r.score.total, reverse=True)
@@ -224,6 +225,7 @@ def scanner_payload(scan: ScanResult, sc: Any, max_results: int) -> dict[str, An
             "atr_pct": _round(f.atr_pct_4h, 2),
             "status": r.status,
             "plans": r.plan_data,
+            "structure": r.structure_data,
             "reasons": [head, *r.structure, *r.plans, *s.reasons, *(f"Sem dado: {m}" for m in s.missing[:3])],
         })
     return {

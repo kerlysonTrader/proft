@@ -33,6 +33,11 @@ from bot.signals.ote_fibo import Pivot, find_pivots
 
 TREND_LABEL = {1: "alta", -1: "baixa", 0: "lateral"}
 MAX_TOUCH_LOOKBACK = 6   # pivôs anteriores examinados para contar toques na reta
+EVENT_LABELS = {"bos_up": "BOS de alta", "bos_down": "BOS de baixa", "choch_up": "CHoCH de alta (virada para alta)",
+                "choch_down": "CHoCH de baixa (virada para baixa)", "lta_break": "quebra da LTA",
+                "ltb_break": "quebra da LTB", "wedge_up": "rompimento de cunha de baixa (falling wedge)",
+                "wedge_down": "perda de cunha de alta (rising wedge)", "cross_up": "MME9 cruzou acima da MME21",
+                "cross_down": "MME9 cruzou abaixo da MME21"}
 READING_NOTE = ("📐 Leitura descritiva: entrar mecanicamente nesses gatilhos (BOS, CHoCH, LTB, cunha, "
                 "médias) não mostrou vantagem no backtest intraday 15m/1H (12/10/2026) — use como apoio")
 EVENT_COLUMNS = ("bos_up", "bos_down", "choch_up", "choch_down", "lta_break", "ltb_break",
@@ -242,12 +247,7 @@ def reading_lines(row: dict[str, float], ctx_row: dict[str, float] | None, tf: s
         lt.append(f"LTB em {_fmt(row['ltb'])} ({int(row['ltb_touches'])} toques)")
     if lt:
         lines.append(f"Linhas {tf}: {'; '.join(lt)}")
-    events = {"bos_up": "BOS de alta", "bos_down": "BOS de baixa", "choch_up": "CHoCH de alta (virada para alta)",
-              "choch_down": "CHoCH de baixa (virada para baixa)", "lta_break": "quebra da LTA",
-              "ltb_break": "quebra da LTB", "wedge_up": "rompimento de cunha de baixa (falling wedge)",
-              "wedge_down": "perda de cunha de alta (rising wedge)", "cross_up": "MME9 cruzou acima da MME21",
-              "cross_down": "MME9 cruzou abaixo da MME21"}
-    fired = [label for key, label in events.items() if row.get(key)]
+    fired = [label for key, label in EVENT_LABELS.items() if row.get(key)]
     if fired:
         lines.append(f"Na última vela de {tf}: {', '.join(fired)}")
     align = int(row["ma_align"])
@@ -287,11 +287,58 @@ def watch_line(row: dict[str, float], ctx_row: dict[str, float], tf: str, ctx_tf
     return f"Gatilho a observar: {text}"
 
 
+def _num(v: float) -> float | None:
+    return None if v != v else float(v)
+
+
+def snapshot(row: dict[str, float], params: StructureParams) -> dict[str, Any]:
+    """Leitura de um tempo gráfico em números (para o Radar do painel)."""
+    close = row["close"]
+
+    def side(v: float) -> str | None:
+        return None if v != v else ("acima" if close > v else "abaixo")
+
+    def count(v: float) -> int | None:
+        return None if v != v else int(v)
+
+    return {
+        "tendencia": TREND_LABEL[int(row["trend"])],
+        "preco": _num(close),
+        "ultimo_topo": _num(row["last_high"]), "ultimo_fundo": _num(row["last_low"]),
+        "topo_anterior": _num(row["prev_high"]), "fundo_anterior": _num(row["prev_low"]),
+        "lta": _num(row["lta"]), "lta_toques": count(row["lta_touches"]),
+        "ltb": _num(row["ltb"]), "ltb_toques": count(row["ltb_touches"]),
+        "eventos": [label for key, label in EVENT_LABELS.items() if row.get(key)],
+        "medias": {str(params.ema_fast): _num(row["ema_fast"]), str(params.ema_slow): _num(row["ema_slow"]),
+                   str(params.ema_mid): _num(row["ema_mid"]), str(params.ema_long): _num(row["ema_long"])},
+        "alinhamento": {1: "alta", -1: "baixa", 0: "nenhum"}[int(row["ma_align"])],
+        "preco_vs_media": side(row["ema_mid"]), "preco_vs_media_longa": side(row["ema_long"]),
+        "atr": _num(row["atr"]),
+    }
+
+
+def structure_bundle(frames: dict[str, pd.DataFrame], params: StructureParams | None = None,
+                     tf: str = "15m", ctx_tf: str = "1H") -> tuple[list[str], dict[str, Any] | None]:
+    """Leitura em texto (15m + 1H) e em números (todos os tempos de `frames`, ex.: 15m, 1H, 4H).
+
+    frames = {"15m": velas, "1H": velas, "4H": velas}, só velas FECHADAS.
+    """
+    params = params or StructureParams()
+    rows = {label: row_at(structure_arrays(df, params), len(df) - 1) for label, df in frames.items() if len(df) >= 60}
+    if not rows:
+        return [], None
+    data: dict[str, Any] = {"tempos": {label: snapshot(row, params) for label, row in rows.items()},
+                            "gatilho": None, "nota": READING_NOTE.removeprefix("📐 ")}
+    lines: list[str] = []
+    if tf in rows and ctx_tf in rows:
+        lines = ["📐 " + line for line in reading_lines(rows[tf], rows[ctx_tf], tf, ctx_tf)] + [READING_NOTE]
+        t = rows[tf]
+        if t["last_high"] == t["last_high"] and t["last_low"] == t["last_low"]:
+            data["gatilho"] = watch_line(t, rows[ctx_tf], tf, ctx_tf).removeprefix("Gatilho a observar: ")
+    return lines, data
+
+
 def structure_reading(trig: pd.DataFrame, ctx: pd.DataFrame, params: StructureParams | None = None,
                       tf: str = "15m", ctx_tf: str = "1H") -> list[str]:
-    """Leitura do momento (velas FECHADAS) para o painel; vazia se faltar histórico."""
-    if len(trig) < 60 or len(ctx) < 60:
-        return []
-    t = row_at(structure_arrays(trig, params), len(trig) - 1)
-    c = row_at(structure_arrays(ctx, params), len(ctx) - 1)
-    return ["📐 " + line for line in reading_lines(t, c, tf, ctx_tf)] + [READING_NOTE]
+    """Leitura do momento (velas FECHADAS) em texto; vazia se faltar histórico."""
+    return structure_bundle({tf: trig, ctx_tf: ctx}, params, tf, ctx_tf)[0]

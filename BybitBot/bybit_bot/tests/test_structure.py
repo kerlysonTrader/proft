@@ -170,3 +170,21 @@ def test_robo_ao_vivo_e_backtest_dao_os_mesmos_sinais(cfg):
                [(s.setup, round(s.entry, 9), round(s.stop, 9)) for s in live]
         compared += bool(fast)
     assert compared > 0
+
+
+# ------------------------------------------------------------------ plano invalidado
+def test_plano_invalidado_quando_o_preco_passa_do_stop():
+    from bot.signals.plans import entry_plans, plan_dict, plan_lines
+
+    cfg = load_config(CONFIG_PATH)
+    closes = list(np.linspace(100, 130, 280)) + list(np.linspace(130, 110, 20))   # alta e queda forte
+    h1 = frame(closes, step=KLINE_INTERVAL_MS["60"])
+    h4 = frame(closes[::4], step=KLINE_INTERVAL_MS["240"])
+    now = int(h1["start_ms"].iat[-1]) + KLINE_INTERVAL_MS["60"]
+    plans = entry_plans(h1, h4, {"trend": 25, "squeeze": 0}, now, cfg)
+    pb = next(p for p in plans if p.setup == "pullback_tendencia")
+    assert h1["close"].iat[-1] <= pb.stop and pb.price_vs_zone == "invalidado"
+    d = plan_dict(pb)
+    assert d["situacao"] == "invalidado" and d["retomada"] == pytest.approx(pb.zone[1])
+    line = plan_lines(plans, cfg.setups.common, cfg.exits)[0]
+    assert "INVALIDADO" in line and "voltar acima" in line

@@ -38,8 +38,10 @@ class FakeReader:
             start = last_open - (k - 1) * step
             o, c = self._price(symbol, start), self._price(symbol, start + step)
             volume = step / 60_000   # proporcional à duração: 24 velas 1H = 1 vela diária
-            out.append(Kline(start, interval, o, max(o, c) * 1.0005, min(o, c) * 0.9995, c, volume, volume * c,
-                             symbol))
+            # pavios assimétricos: a vela seguinte a um topo não empata a máxima (senão não há pivô)
+            high = c * 1.0007 if c > o else o * 1.0003
+            low = c * 0.9993 if c < o else o * 0.9997
+            out.append(Kline(start, interval, o, high, low, c, volume, volume * c, symbol))
         return out
 
     def meta(self, symbol: str) -> SymbolMeta:
@@ -204,3 +206,14 @@ def test_leitura_de_estrutura_no_painel(scan, config):
     assert any(x.startswith("📐 Estrutura 1H:") for x in lines)
     assert any(x.startswith("📐 Estrutura 15m:") for x in lines)
     assert any(x.startswith("📐 Médias 15m:") for x in lines)
+
+
+def test_estrutura_em_numeros_para_o_radar(scan, config):
+    row = next(r for r in mt5_payload(scan, config.score, 150)["results"] if r["symbol"] == "ALTA · compra")
+    data = row["structure"]
+    assert set(data["tempos"]) == {"15m", "1H", "4H"}
+    m15 = data["tempos"]["15m"]
+    assert m15["tendencia"] in ("alta", "baixa", "lateral")
+    assert set(m15["medias"]) == {"9", "21", "50", "200"}
+    assert m15["alinhamento"] in ("alta", "baixa", "nenhum") and isinstance(m15["eventos"], list)
+    assert data["gatilho"] and "backtest" in data["nota"]
