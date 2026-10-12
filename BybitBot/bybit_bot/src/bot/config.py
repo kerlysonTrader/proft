@@ -343,6 +343,9 @@ class PullbackConfig(StrictModel):
     rsi_touch_band_1h: Band
     order_valid_candles_1h: PositiveInt
     stop_atr_buffer: NonNegFloat
+    pullback_lookback_1h: Annotated[int, Field(ge=2)]
+    entry_tolerance_pct: NonNegFloat
+    min_body_fraction: Annotated[float, Field(gt=0, le=1)]
 
 
 class BreakoutConfig(StrictModel):
@@ -352,6 +355,7 @@ class BreakoutConfig(StrictModel):
     retest_offset_pct: NonNegFloat
     order_valid_candles_1h: PositiveInt
     stop_atr_mult: PositiveFloat
+    min_stop_atr: NonNegFloat
 
 
 class OteFiboConfig(StrictModel):
@@ -360,11 +364,21 @@ class OteFiboConfig(StrictModel):
     ote_start: Annotated[float, Field(gt=0, lt=1)]
     ote_end: Annotated[float, Field(gt=0, lt=1)]
     displacement_atr: PositiveFloat
+    use_order_block: bool
+    ob_lookback: PositiveInt
+    stop_atr_buffer: NonNegFloat
+    tp1_level: Annotated[float, Field(ge=0, lt=1)]
+    tp2_level: Annotated[float, Field(ge=0, lt=1)]
+    tp3_extension: Annotated[float, Field(gt=1)]
+    entry_tolerance_pct: NonNegFloat
+    order_valid_candles_1h: PositiveInt
 
     @model_validator(mode="after")
     def _zone(self) -> OteFiboConfig:
         if self.ote_start >= self.ote_end:
             raise ValueError("ote_start deve ser menor que ote_end")
+        if self.tp2_level > self.tp1_level:
+            raise ValueError("tp2_level deve ficar mais perto do topo (menor) que tp1_level")
         return self
 
 

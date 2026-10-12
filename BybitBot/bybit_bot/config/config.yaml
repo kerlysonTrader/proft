@@ -144,6 +144,9 @@ setups:
     rsi_touch_band_1h: [35, 45]
     order_valid_candles_1h: 2
     stop_atr_buffer: 0.5
+    pullback_lookback_1h: 12        # velas 1H em que o recuo (zona das EMAs e RSI) é procurado
+    entry_tolerance_pct: 0.1        # limite = fechamento da confirmação + 0,1 %
+    min_body_fraction: 0.5          # corpo da vela de confirmação ≥ 50 % do range
   rompimento_compressao:
     min_squeeze_points: 10
     range_lookback_4h: 20
@@ -151,12 +154,21 @@ setups:
     retest_offset_pct: 0.2
     order_valid_candles_1h: 6
     stop_atr_mult: 1.5
-  ote_fibo:
+    min_stop_atr: 1.0               # distância mínima do stop = 1 × ATR 1H
+  ote_fibo:                         # porte do MQL5/Experts/ICT_FiboEntry_EA.mq5 (só compras)
     swing_bars: 5
     min_leg_atr: 3.0
     ote_start: 0.618
     ote_end: 0.79
     displacement_atr: 1.5
+    use_order_block: true           # exige confluência OTE ∩ Order Block
+    ob_lookback: 40                 # velas antes do fim da perna onde a vela de deslocamento é procurada
+    stop_atr_buffer: 0.25           # stop = mín(OB, origem da perna) − 0,25 × ATR 1H
+    tp1_level: 0.5                  # 50 % da perna
+    tp2_level: 0.0                  # topo da perna
+    tp3_extension: 1.618            # extensão (informativa; o TP2 é o alvo do filtro de R:R)
+    entry_tolerance_pct: 0.1
+    order_valid_candles_1h: 2
   common:
     min_rr_tp2: 2.0
     min_stop_pct: 1.5

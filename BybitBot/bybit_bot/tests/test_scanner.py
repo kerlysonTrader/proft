@@ -37,7 +37,7 @@ def frame(closes, freq="4h", start="2026-01-01", wick=0.002, volume=1000.0) -> p
         "volume": volume,
         "turnover": closes * volume,
     }, index=pd.date_range(start, periods=len(closes), freq=freq, tz="UTC"))
-    df.insert(0, "start_ms", df.index.astype("int64") // 1_000_000)
+    df.insert(0, "start_ms", [int(ts.timestamp() * 1000) for ts in df.index])
     return df
 
 
