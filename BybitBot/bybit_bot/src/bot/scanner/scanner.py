@@ -24,9 +24,11 @@ from bot.scanner.regime import Regime, RegimeState, breadth_pct, evaluate_regime
 from bot.scanner.scoring import ScoreResult, classify, score_features
 from bot.scanner.universe import UniverseCoin, build_universe
 from bot.signals.plans import entry_plans, plan_dict, plan_lines
+from bot.signals.structure import StructureParams, structure_reading
 
 log = get_logger("scanner")
 
+STRUCTURE_CANDLES = 400   # velas de 15m para a leitura de estrutura (MME200 + pivôs)
 STATUS_BY_LIST = {"A": "watch", "B": "watch_b", "-": "ignored"}
 LABEL_BY_LIST = {"A": "Watchlist A", "B": "Watchlist B", "-": "Descartada"}
 
@@ -41,6 +43,7 @@ class CoinResult:
     plans: list[str] = field(default_factory=list)
     plan_data: list[dict[str, Any]] = field(default_factory=list)
     gemini: Analysis | None = None
+    structure: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -71,6 +74,7 @@ class _CoinData:
     h4: pd.DataFrame
     h1: pd.DataFrame
     derivatives: Any
+    m15: pd.DataFrame | None = None
 
 
 class Scanner:
@@ -87,6 +91,7 @@ class Scanner:
             h4=self.md.klines(symbol, "240", limit=c.h4),
             h1=self.md.klines(symbol, "60", limit=c.h1),
             derivatives=self.md.derivatives(symbol),
+            m15=self.md.klines(symbol, "15", limit=STRUCTURE_CANDLES),
         )
 
     def run(self) -> ScanResult:
@@ -142,6 +147,11 @@ class Scanner:
                 plans = entry_plans(d.h1, d.h4, r.score.components, run_at, cfg)
                 r.plans = plan_lines(plans, cfg.setups.common, cfg.exits)
                 r.plan_data = [plan_dict(p) for p in plans]
+        params = StructureParams.from_config(cfg.setups.estrutura, cfg.indicators.atr_period)
+        for r in results:
+            d = data[r.coin.symbol]
+            if d.m15 is not None:
+                r.structure = structure_reading(d.m15, d.h1, params)
         analyze_many(self.analyst, [(r, f"cripto:{r.coin.symbol}", "cripto", crypto_context(r, regime, run_at))
                                     for r in results if r.watchlist in cfg.gemini.analyze_watchlists])
         results.sort(key=lambda r: r.score.total, reverse=True)
@@ -214,7 +224,7 @@ def scanner_payload(scan: ScanResult, sc: Any, max_results: int) -> dict[str, An
             "atr_pct": _round(f.atr_pct_4h, 2),
             "status": r.status,
             "plans": r.plan_data,
-            "reasons": [head, *r.plans, *s.reasons, *(f"Sem dado: {m}" for m in s.missing[:3])],
+            "reasons": [head, *r.structure, *r.plans, *s.reasons, *(f"Sem dado: {m}" for m in s.missing[:3])],
         })
     return {
         "run": {

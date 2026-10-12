@@ -34,6 +34,7 @@ from bot.signals.direction import invert_frame, to_short
 from bot.signals.engine import evaluate_setups
 from bot.signals.filters import SignalContext, check_filters
 from bot.signals.plans import entry_plans, plan_dict, plan_lines, signal_dict
+from bot.signals.structure import StructureParams, structure_reading
 
 log = get_logger("markets.mt5_scanner")
 
@@ -76,6 +77,7 @@ class Mt5Row:
     alerts: list[Signal] = field(default_factory=list)                     # dispararam e passaram nos filtros
     blocked: list[tuple[Signal, list[str]]] = field(default_factory=list)  # dispararam mas foram barrados
     gemini: Analysis | None = None
+    structure: list[str] = field(default_factory=list)
 
     @property
     def label(self) -> str:
@@ -137,8 +139,12 @@ class Mt5Scanner:
                 except Exception as exc:  # um ativo com erro não derruba a varredura
                     errors[symbol] = f"{type(exc).__name__}: {exc}"
                     log.warning("falha ao ler o MT5", extra={"symbol": symbol, "data": {"error": str(exc)}})
+            params = StructureParams.from_config(self.cfg.setups.estrutura, self.cfg.indicators.atr_period)
+            readings = {s: structure_reading(d[TRIGGER], d[CONTEXT], params) for s, d in data.items()}
             for direction in self.directions:
                 regime, group_rows = self._scan_group(group, direction, data, spreads, now)
+                for r in group_rows:
+                    r.structure = readings.get(r.symbol, [])
                 regimes[f"{GROUP_LABEL.get(group, group)} · {side_word(direction)}"] = regime
                 rows.extend(group_rows)
         wanted = self.cfg.gemini.analyze_watchlists
@@ -293,7 +299,7 @@ def mt5_payload(scan: Mt5Scan, sc: Any, max_results: int) -> dict[str, Any]:
             "status": r.status,
             "plans": [*(signal_dict(a) for a in r.alerts), *r.plan_data],
             "reasons": [head, *(alert_text(r, a) for a in r.alerts), *([r.gemini.line()] if r.gemini else []),
-                        *blocked, *r.plans,
+                        *r.structure, *blocked, *r.plans,
                         *(real_price_reason(x, r.direction) for x in s.reasons),
                         *(f"Sem dado: {real_price_reason(m, r.direction)}" for m in s.missing[:3])],
         })

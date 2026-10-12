@@ -252,4 +252,44 @@ def reading_lines(row: dict[str, float], ctx_row: dict[str, float] | None, tf: s
     lines.append(f"Médias {tf}: " + ("alinhadas em alta (9 > 21 > 50 > 200)" if align == 1 else
                                      "alinhadas em baixa (9 < 21 < 50 < 200)" if align == -1 else
                                      "sem alinhamento"))
+    if ctx_row is not None and known("last_high", "last_low"):
+        lines.append(watch_line(row, ctx_row, tf, ctx_tf))
     return lines
+
+
+def watch_line(row: dict[str, float], ctx_row: dict[str, float], tf: str, ctx_tf: str) -> str:
+    """O que observar juntando os dois tempos gráficos (leitura, não recomendação)."""
+    ctx_trend, above = int(ctx_row["trend"]), ctx_row["close"] > ctx_row["ema_mid"]
+    trend, hi, lo = int(row["trend"]), _fmt(row["last_high"]), _fmt(row["last_low"])
+    if ctx_trend == 1 and above:
+        if trend == 1:
+            text = (f"{ctx_tf} e {tf} em alta: continuação com BOS acima de {hi}; a estrutura do {tf} "
+                    f"se perde abaixo de {lo}")
+        else:
+            text = f"a favor do {ctx_tf} (compra): aguardar CHoCH/BOS de alta no {tf} acima de {hi}"
+            if row["ltb"] == row["ltb"]:
+                text += f" ou a quebra da LTB em {_fmt(row['ltb'])}"
+            text += f"; invalida abaixo de {lo}"
+    elif ctx_trend == -1 and not above:
+        if trend == -1:
+            text = (f"{ctx_tf} e {tf} em baixa: continuação com BOS abaixo de {lo}; a estrutura do {tf} "
+                    f"se perde acima de {hi}")
+        else:
+            text = f"a favor do {ctx_tf} (venda): aguardar CHoCH/BOS de baixa no {tf} abaixo de {lo}"
+            if row["lta"] == row["lta"]:
+                text += f" ou a quebra da LTA em {_fmt(row['lta'])}"
+            text += f"; invalida acima de {hi}"
+    else:
+        text = (f"{ctx_tf} sem direção clara (Dow e MME50 não concordam): melhor aguardar; "
+                f"no {tf}, rompimento acima de {hi} ou abaixo de {lo}")
+    return f"Gatilho a observar: {text}"
+
+
+def structure_reading(trig: pd.DataFrame, ctx: pd.DataFrame, params: StructureParams | None = None,
+                      tf: str = "15m", ctx_tf: str = "1H") -> list[str]:
+    """Leitura do momento (velas FECHADAS) para o painel; vazia se faltar histórico."""
+    if len(trig) < 60 or len(ctx) < 60:
+        return []
+    t = row_at(structure_arrays(trig, params), len(trig) - 1)
+    c = row_at(structure_arrays(ctx, params), len(ctx) - 1)
+    return ["📐 " + line for line in reading_lines(t, c, tf, ctx_tf)]

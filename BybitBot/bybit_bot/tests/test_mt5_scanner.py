@@ -196,3 +196,11 @@ def test_planos_estruturados_para_o_grafico(scan, config):
         assert p["setup"] in ("Pullback", "Rompimento") and p["alerta"] is False
     zone = next(p["zona"] for p in row["plans"] if p["setup"] == "Pullback")
     assert zone[0] < zone[1]
+
+
+def test_leitura_de_estrutura_no_painel(scan, config):
+    row = next(r for r in mt5_payload(scan, config.score, 150)["results"] if r["symbol"] == "ALTA · compra")
+    lines = [x for x in row["reasons"] if x.startswith("📐")]
+    assert any(x.startswith("📐 Estrutura 1H:") for x in lines)
+    assert any(x.startswith("📐 Estrutura 15m:") for x in lines)
+    assert any(x.startswith("📐 Médias 15m:") for x in lines)
