@@ -141,3 +141,22 @@ def plan_lines(plans: list[Plan], common: Any, exits: Any, footer: str | list[st
     if footer:
         lines.extend([footer] if isinstance(footer, str) else footer)
     return lines
+
+
+SETUP_NAMES = {"pullback_tendencia": "Pullback", "rompimento_compressao": "Rompimento", "ote_fibo": "OTE"}
+
+
+def plan_dict(p: Plan) -> dict[str, Any]:
+    """Plano em números para o painel desenhar no gráfico (entrada, stop, alvos e zona)."""
+    return {"setup": SETUP_NAMES.get(p.setup, p.setup), "lado": "venda" if p.direction < 0 else "compra",
+            "entrada": p.entry, "stop": p.stop, "tp1": p.tp1, "tp2": p.tp2,
+            "zona": list(p.zone) if p.zone else None, "stop_pct": round(p.stop_pct, 3),
+            "situacao": p.price_vs_zone or None, "gatilho": p.trigger, "alerta": False}
+
+
+def signal_dict(s: Any) -> dict[str, Any]:
+    """Sinal que DISPAROU (alerta) no mesmo formato do plano, com alerta = True."""
+    return {"setup": SETUP_NAMES.get(s.setup, s.setup), "lado": "venda" if s.direction < 0 else "compra",
+            "entrada": s.entry, "stop": s.stop, "tp1": s.tp1, "tp2": s.tp2, "zona": None,
+            "stop_pct": round(s.stop_pct, 3), "situacao": "disparou", "gatilho": "setup disparou no fechamento da vela",
+            "alerta": True}

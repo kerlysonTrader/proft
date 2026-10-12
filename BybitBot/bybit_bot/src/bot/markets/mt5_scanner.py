@@ -33,7 +33,7 @@ from bot.signals.base import Signal
 from bot.signals.direction import invert_frame, to_short
 from bot.signals.engine import evaluate_setups
 from bot.signals.filters import SignalContext, check_filters
-from bot.signals.plans import entry_plans, plan_lines
+from bot.signals.plans import entry_plans, plan_dict, plan_lines, signal_dict
 
 log = get_logger("markets.mt5_scanner")
 
@@ -72,6 +72,7 @@ class Mt5Row:
     regime: str
     market_open: bool = True
     plans: list[str] = field(default_factory=list)
+    plan_data: list[dict[str, Any]] = field(default_factory=list)
     alerts: list[Signal] = field(default_factory=list)                     # dispararam e passaram nos filtros
     blocked: list[tuple[Signal, list[str]]] = field(default_factory=list)  # dispararam mas foram barrados
     gemini: Analysis | None = None
@@ -193,6 +194,7 @@ class Mt5Scanner:
             if row.watchlist in ("A", "B"):
                 plans = entry_plans(d[TRIGGER], d[CONTEXT], score.components, now, cfg, direction)
                 row.plans = plan_lines(plans, cfg.setups.common, cfg.exits, footer=footer, trigger_label="15m")
+                row.plan_data = [plan_dict(p) for p in plans]
             if row.watchlist == "A" and row.market_open:
                 self._signals(row, d, cfg, regime, now)
             rows.append(row)
@@ -289,6 +291,7 @@ def mt5_payload(scan: Mt5Scan, sc: Any, max_results: int) -> dict[str, Any]:
             "rsi_4h": _round(flip(f.rsi_4h), 1),
             "atr_pct": _round(f.atr_pct_4h, 2),
             "status": r.status,
+            "plans": [*(signal_dict(a) for a in r.alerts), *r.plan_data],
             "reasons": [head, *(alert_text(r, a) for a in r.alerts), *([r.gemini.line()] if r.gemini else []),
                         *blocked, *r.plans,
                         *(real_price_reason(x, r.direction) for x in s.reasons),

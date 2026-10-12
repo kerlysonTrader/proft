@@ -186,3 +186,13 @@ def test_gemini_analisa_a_watchlist_e_vai_ao_painel(config):
     row = next(x for x in mt5_payload(scan, cfg.score, 150)["results"] if x["gemini_verdict"])
     assert row["gemini_verdict"] == "cautela" and row["gemini_summary"] == "CPI amanhã"
     assert any(x.startswith("Gemini: cautela") for x in row["reasons"])
+
+
+def test_planos_estruturados_para_o_grafico(scan, config):
+    row = next(r for r in mt5_payload(scan, config.score, 150)["results"] if r["symbol"] == "BAIXA · venda")
+    assert row["plans"], "linha da Watchlist deve levar os planos em números"
+    for p in row["plans"]:
+        assert p["lado"] == "venda" and p["stop"] > p["entrada"] > p["tp1"] > p["tp2"]
+        assert p["setup"] in ("Pullback", "Rompimento") and p["alerta"] is False
+    zone = next(p["zona"] for p in row["plans"] if p["setup"] == "Pullback")
+    assert zone[0] < zone[1]
