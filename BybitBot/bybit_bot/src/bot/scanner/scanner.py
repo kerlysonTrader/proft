@@ -26,6 +26,7 @@ from bot.scanner.regime import Regime, RegimeState, breadth_pct, evaluate_regime
 from bot.scanner.scoring import ScoreResult, classify, score_features
 from bot.scanner.universe import UniverseCoin, build_universe
 from bot.signals.base import TF_LABEL
+from bot.signals.feed import FeedEvent, FeedState, plan_events, structure_events
 from bot.signals.plans import entry_plans, plan_dict, plan_lines
 from bot.signals.structure import StructureParams, structure_bundle
 
@@ -62,6 +63,7 @@ class ScanResult:
     results: list[CoinResult]
     rejected: Counter = field(default_factory=Counter)
     errors: dict[str, str] = field(default_factory=dict)
+    events: list[FeedEvent] = field(default_factory=list)   # feed da aba Sinais
 
     @property
     def universe_size(self) -> int:
@@ -84,8 +86,9 @@ class _CoinData:
 class Scanner:
     def __init__(self, md: MarketData, registry: Any, config: Any, state: RegimeState,
                  now_ms: Callable[[], int] | None = None, analyst: GeminiAnalyst | None = None,
-                 stats: dict[str, SetupStats] | None = None) -> None:
+                 stats: dict[str, SetupStats] | None = None, feed_state: FeedState | None = None) -> None:
         self.stats = stats or {}
+        self.feed_state = feed_state
         self.md, self.registry, self.cfg, self.state = md, registry, config, state
         self.analyst = analyst
         self._now_ms = now_ms or md.client.now_ms
@@ -162,12 +165,27 @@ class Scanner:
         results.sort(key=lambda r: r.score.total, reverse=True)
 
         duration = int((time.monotonic() - started) * 1000)
-        scan = ScanResult(run_at, duration, regime, results, rejected, errors)
+        scan = ScanResult(run_at, duration, regime, results, rejected, errors,
+                          events=self._events(results, data, run_at))
         log.info("varredura concluída", extra={"data": {
             "regime": regime.regime, "universo": scan.universe_size, "watchlist_a": scan.candidates,
             "watchlist_b": sum(r.watchlist == "B" for r in results), "duracao_s": round(duration / 1000, 1),
             "erros": len(errors)}})
         return scan
+
+    def _events(self, results: list[CoinResult], data: dict[str, _CoinData], now: int) -> list[FeedEvent]:
+        """Feed da aba Sinais: gatilhos de estrutura (compra e venda, p/ perpétuo) e mudanças dos planos."""
+        events: list[FeedEvent] = []
+        for r in results:
+            d = data.get(r.coin.symbol)
+            if d is None or d.m15 is None:
+                continue
+            sym = r.coin.symbol
+            events += structure_events("cripto", sym, sym, d.m15, d.h1, now, self.cfg,
+                                       scores={1: r.score.total}, gemini={1: r.gemini})
+            if self.feed_state is not None and r.plan_data:
+                events += plan_events("cripto", sym, 1, r.plan_data, self.feed_state, now, r.score.total, r.gemini)
+        return events
 
     def _plans(self, d: _CoinData, r: CoinResult, run_at: int) -> list:
         """Planos no perfil do scanner (day trade 15m/1H por padrão) com a estatística do backtest."""

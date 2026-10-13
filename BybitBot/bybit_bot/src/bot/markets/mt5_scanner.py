@@ -33,6 +33,7 @@ from bot.scanner.scoring import ScoreResult, classify, score_features
 from bot.signals.base import Signal
 from bot.signals.direction import invert_frame, to_short
 from bot.signals.engine import evaluate_setups
+from bot.signals.feed import FeedEvent, FeedState, plan_events, structure_events
 from bot.signals.filters import SignalContext, check_filters
 from bot.signals.plans import entry_plans, plan_dict, plan_lines, signal_dict
 from bot.signals.structure import StructureParams, structure_bundle
@@ -92,6 +93,7 @@ class Mt5Scan:
     rows: list[Mt5Row]
     regimes: dict[str, Regime] = field(default_factory=dict)   # "metais · compra" -> regime
     errors: dict[str, str] = field(default_factory=dict)
+    events: list[FeedEvent] = field(default_factory=list)   # feed da aba Sinais
 
     @property
     def alerts(self) -> list[tuple[Mt5Row, Signal]]:
@@ -102,8 +104,9 @@ class Mt5Scanner:
     def __init__(self, reader: Mt5Reader, config: Any, groups: list[str] | None = None,
                  stats: dict[tuple[str, int], dict[str, SetupStats]] | None = None,
                  state_dir: str | Path | None = None, now_ms: Callable[[], int] | None = None,
-                 analyst: GeminiAnalyst | None = None) -> None:
+                 analyst: GeminiAnalyst | None = None, feed_state: FeedState | None = None) -> None:
         self.analyst = analyst
+        self.feed_state = feed_state
         self.reader, self.cfg = reader, config
         mcfg = config.markets.mt5
         self.groups = groups or list(mcfg.groups)
@@ -122,6 +125,7 @@ class Mt5Scanner:
         started = time.monotonic()
         now = self._now_ms()
         rows: list[Mt5Row] = []
+        frames: dict[str, dict[str, pd.DataFrame]] = {}
         regimes: dict[str, Regime] = {}
         errors: dict[str, str] = {}
         for group in self.groups:
@@ -136,6 +140,7 @@ class Mt5Scanner:
                 except Exception as exc:  # um ativo com erro não derruba a varredura
                     errors[symbol] = f"{type(exc).__name__}: {exc}"
                     log.warning("falha ao ler o MT5", extra={"symbol": symbol, "data": {"error": str(exc)}})
+            frames.update(data)
             params = StructureParams.from_config(self.cfg.setups.estrutura, self.cfg.indicators.atr_period)
             readings = {s: structure_bundle({"15m": d[TRIGGER], "1H": d[CONTEXT], "4H": d["240"]}, params)
                         for s, d in data.items()}
@@ -149,11 +154,33 @@ class Mt5Scanner:
         analyze_many(self.analyst, [(r, f"mt5:{r.symbol}:{side_word(r.direction)}", "mt5", mt5_context(r, now))
                                     for r in rows if r.market_open and (r.watchlist in wanted or r.alerts)])
         rows.sort(key=lambda r: (-len(r.alerts), "AB-".index(r.watchlist), -r.score.total))
-        scan = Mt5Scan(now, int((time.monotonic() - started) * 1000), rows, regimes, errors)
+        scan = Mt5Scan(now, int((time.monotonic() - started) * 1000), rows, regimes, errors,
+                       events=self._events(rows, frames, now))
         log.info("varredura MT5 concluída", extra={"data": {
             "linhas": len(rows), "watchlist_a": sum(r.watchlist == "A" for r in rows),
             "alertas": len(scan.alerts), "erros": len(errors), "duracao_s": round(scan.duration_ms / 1000, 1)}})
         return scan
+
+    def _events(self, rows: list[Mt5Row], frames: dict[str, dict[str, pd.DataFrame]], now: int) -> list[FeedEvent]:
+        """Feed da aba Sinais: gatilhos de estrutura (compra/venda) e mudanças dos planos, com mercado aberto."""
+        by_symbol: dict[str, list[Mt5Row]] = {}
+        for r in rows:
+            by_symbol.setdefault(r.symbol, []).append(r)
+        events: list[FeedEvent] = []
+        for symbol, rs in by_symbol.items():
+            if not any(r.market_open for r in rs) or symbol not in frames:
+                continue
+            asset = symbol.removesuffix(".s")
+            d = frames[symbol]
+            events += structure_events("mt5", asset, symbol, d[TRIGGER], d[CONTEXT], now, self.cfg,
+                                       directions=tuple(self.directions),
+                                       scores={r.direction: r.score.total for r in rs},
+                                       gemini={r.direction: r.gemini for r in rs})
+            if self.feed_state is not None:
+                for r in rs:
+                    events += plan_events("mt5", asset, r.direction, r.plan_data, self.feed_state, now,
+                                          r.score.total, r.gemini)
+        return events
 
     def _scan_group(self, group: str, direction: int, data: dict[str, dict[str, pd.DataFrame]],
                     spreads: dict[str, float], now: int) -> tuple[Regime, list[Mt5Row]]:

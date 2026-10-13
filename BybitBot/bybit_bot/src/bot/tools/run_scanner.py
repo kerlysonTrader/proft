@@ -24,9 +24,11 @@ from bot.reporting.dashboard_client import DashboardClient
 from bot.scanner.regime import RegimeState
 from bot.scanner.scanner import LABEL_BY_LIST, Scanner, scanner_payload
 from bot.secrets import SecretProvider, load_dotenv_if_local
+from bot.signals.feed import FeedState, send_events
 from bot.storage.kline_store import KlineStore
 
 STATE_PATH = "data/scanner_state.json"
+FEED_STATE = "data/feed_state.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,7 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     state = RegimeState.load(state_path)
 
     stats = load_stats_file(resolve_path(STATS_FILE)).get("cripto_spot_long")
-    scan = Scanner(md, registry, config, state, analyst=gemini_analyst(config), stats=stats).run()
+    feed_state = FeedState.load(resolve_path(FEED_STATE))
+    scan = Scanner(md, registry, config, state, analyst=gemini_analyst(config), stats=stats,
+                   feed_state=feed_state).run()
     state.save(state_path)
 
     tz = ZoneInfo(config.timezone)
@@ -82,7 +86,11 @@ def main(argv: list[str] | None = None) -> int:
             result = dashboard.send("scanner_run", payload)
             print(f"Painel: {'OK' if result.ok else 'FALHOU'} (HTTP {result.status}) {result.body or ''}")
             exit_code = 0 if result.ok else 1
+            sent, failed = send_events(scan.events, feed_state, dashboard)
+            print(f"Painel (aba Sinais): {sent} eventos novos enviados, {failed} falhas")
+            exit_code |= 1 if failed else 0
             dashboard.close()
+    feed_state.save(resolve_path(FEED_STATE))   # situação dos planos (para detectar mudanças)
     store.close()
     client.close()
     return exit_code

@@ -32,10 +32,12 @@ from bot.markets.mt5_source import Mt5Error, Mt5Reader
 from bot.markets.stats import STATS_FILE, load_stats, load_stats_file
 from bot.reporting.dashboard_client import DashboardClient
 from bot.secrets import SecretProvider
+from bot.signals.feed import FeedState, send_events
 from bot.tools.run_scanner import gemini_analyst
 
 STATE_DIR = "data/mt5_state"
 SENT_PATH = "data/mt5_state/alertas_enviados.json"
+FEED_STATE = "data/mt5_state/feed_state.json"
 DEFAULT_PROJECT = "bybit-scanner-bot"
 
 
@@ -88,7 +90,7 @@ def save_sent(sent: list[str]) -> None:
     path.write_text(json.dumps(sent[-500:]), encoding="utf-8")
 
 
-def send_scan(scan: Mt5Scan, config, dashboard: DashboardClient) -> bool:
+def send_scan(scan: Mt5Scan, config, dashboard: DashboardClient, feed_state: FeedState | None = None) -> bool:
     result = dashboard.send("scanner_run", mt5_payload(scan, config.score, config.dashboard.max_results_per_run))
     print(f"Painel (scanner MT5): {'OK' if result.ok else 'FALHOU'} (HTTP {result.status})")
     ok = result.ok
@@ -106,6 +108,10 @@ def send_scan(scan: Mt5Scan, config, dashboard: DashboardClient) -> bool:
             sent.append(signal.order_link_id)
         ok &= r1.ok and r2.ok
     save_sent(sent)
+    if feed_state is not None:
+        n_ok, n_fail = send_events(scan.events, feed_state, dashboard)
+        print(f"Painel (aba Sinais): {n_ok} eventos novos enviados, {n_fail} falhas")
+        ok = ok and not n_fail
     return ok
 
 
@@ -173,8 +179,9 @@ def run_once(reader: Mt5Reader, config, groups: list[str], analyst, dashboard, t
     """Uma varredura. 0 = ok, 1 = falha ao enviar, 2 = sem dados do MT5 (nada é enviado)."""
     mcfg = config.markets.mt5
     reader.detect_offset([s for g in groups for s in mcfg.groups[g]])
+    feed_state = FeedState.load(resolve_path(FEED_STATE))
     scan = Mt5Scanner(reader, config, groups, backtest_stats(config, groups),
-                      state_dir=resolve_path(STATE_DIR), analyst=analyst).run()
+                      state_dir=resolve_path(STATE_DIR), analyst=analyst, feed_state=feed_state).run()
     if not scan.rows:
         print(f"MT5 sem dados ({len(scan.errors)} erros de leitura) — nada enviado ao painel")
         return 2
@@ -182,9 +189,11 @@ def run_once(reader: Mt5Reader, config, groups: list[str], analyst, dashboard, t
     if not any(r.market_open for r in scan.rows):
         print("Mercados fechados (sem velas novas) — nada enviado ao painel")
         return 0
+    code = 0
     if dashboard is not None:
-        return 0 if send_scan(scan, config, dashboard) else 1
-    return 0
+        code = 0 if send_scan(scan, config, dashboard, feed_state) else 1
+    feed_state.save(resolve_path(FEED_STATE))   # situação dos planos e eventos já enviados
+    return code
 
 
 def _seconds_to_next(minutes: float) -> float:
