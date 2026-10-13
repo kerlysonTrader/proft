@@ -15,7 +15,9 @@ Cada evento vai uma única vez (FeedState guarda os ids enviados e a situação 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,8 @@ CONTEXT_TEXT = ("1H em alta (Dow) e acima da MME50", "1H em baixa (Dow) e abaixo
 KIND_LABEL = {"gatilho": "Gatilho atingido", "na_zona": "Preço na zona do plano", "invalidado": "Plano invalidado"}
 SIDE_WORD = {1: "compra", -1: "venda"}
 MAX_SENT = 3000
+TRACK_HOURS = 12           # gatilho sem alvo nem stop em 12 h = "expirou" (pelo último preço)
+M15_MS = 15 * 60_000
 
 
 @dataclass
@@ -63,6 +67,7 @@ class FeedEvent:
     score: float | None = None
     gemini: Any = None          # Analysis | None
     extra: dict[str, Any] = field(default_factory=dict)
+    source: str = ""            # símbolo de onde vêm as velas (ex.: XAUUSD.s) para o placar
 
     @property
     def side(self) -> str:
@@ -91,7 +96,7 @@ class FeedEvent:
             "details": {"mercado": self.market, "ativo": self.asset, "lado": self.side, "evento": self.kind,
                         "titulo": KIND_LABEL[self.kind], "descricao": self.description, "contexto": self.context,
                         "setup_nome": SETUP_NAMES.get(self.setup, self.setup), "gemini": gem, "nota": FEED_NOTE,
-                        **self.extra},
+                        **({"resultado": "aberto"} if self.kind == "gatilho" else {}), **self.extra},
         }
 
 
@@ -124,7 +129,7 @@ def structure_events(market: str, asset: str, symbol: str, m15: pd.DataFrame, h1
         out.append(FeedEvent(market, asset, direction, "gatilho", main.setup, main.entry, main.stop, main.tp1,
                              main.tp2, main.order_link_id, description, CONTEXT_TEXT[side_i],
                              score=(scores or {}).get(direction), gemini=(gemini or {}).get(direction),
-                             extra={"vela_15m_ms": main.candle_start_ms}))
+                             extra={"vela_15m_ms": main.candle_start_ms}, source=symbol))
     return out
 
 
@@ -165,18 +170,20 @@ def _fmt(value: float) -> str:
 class FeedState:
     sent: list[str] = field(default_factory=list)
     plans: dict[str, str] = field(default_factory=dict)
+    tracking: dict[str, dict[str, Any]] = field(default_factory=dict)   # gatilhos em acompanhamento (placar)
 
     @classmethod
     def load(cls, path: str | Path) -> FeedState:
         try:
             raw = json.loads(Path(path).read_text(encoding="utf-8"))
-            return cls(list(raw.get("sent", [])), dict(raw.get("plans", {})))
+            return cls(list(raw.get("sent", [])), dict(raw.get("plans", {})), dict(raw.get("tracking", {})))
         except (FileNotFoundError, ValueError):
             return cls()
 
     def save(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(json.dumps({"sent": self.sent[-MAX_SENT:], "plans": self.plans}), encoding="utf-8")
+        data = {"sent": self.sent[-MAX_SENT:], "plans": self.plans, "tracking": self.tracking}
+        Path(path).write_text(json.dumps(data), encoding="utf-8")
 
     def new(self, events: list[FeedEvent]) -> list[FeedEvent]:
         seen = set(self.sent)
@@ -187,11 +194,71 @@ def send_events(events: list[FeedEvent], state: FeedState, dashboard: Any) -> tu
     """Envia os eventos novos (status = tipo do evento). Devolve (enviados, falhas)."""
     ok = fail = 0
     for event in state.new(events):
-        result = dashboard.send("signal", event.payload())
+        payload = event.payload()
+        result = dashboard.send("signal", payload)
         if result.ok:
             state.sent.append(event.event_id)
             ok += 1
+            if event.kind == "gatilho" and event.source:
+                state.tracking[event.event_id] = {
+                    "payload": payload, "fonte": event.source, "dir": event.direction, "entrada": event.entry,
+                    "stop": event.stop, "tp1": event.tp1, "tp2": event.tp2,
+                    "inicio_ms": int(event.extra.get("vela_15m_ms", 0)) + M15_MS}
         else:
             fail += 1
     return ok, fail
 
+
+
+def resolve(track: dict[str, Any], candles: pd.DataFrame, now_ms: int, hours: float = TRACK_HOURS) -> dict | None:
+    """Resultado do gatilho pelas velas de 15m depois do sinal (entrada no fechamento da vela do gatilho):
+    alvo 1 ou stop, o que vier primeiro (os dois na mesma vela = stop, conservador); sem nenhum em
+    `hours` horas = expirou pelo último fechamento. None = ainda em aberto."""
+    d, entry, stop, tp1, tp2 = track["dir"], track["entrada"], track["stop"], track["tp1"], track["tp2"]
+    risk = (entry - stop) * d
+    if risk <= 0:
+        return {"resultado": "invalido", "resultado_r": 0.0}
+    after = candles[candles["start_ms"] >= track["inicio_ms"]]
+    best = 0.0
+    for row in after.itertuples(index=False):
+        high, low = float(row.high), float(row.low)
+        best = max(best, ((high - entry) if d > 0 else (entry - low)) / risk)
+        end = int(row.start_ms) + M15_MS
+        if (low <= stop) if d > 0 else (high >= stop):
+            return _outcome("stop", -1.0, end, best)
+        if (high >= tp1) if d > 0 else (low <= tp1):
+            hit2 = (high >= tp2) if d > 0 else (low <= tp2)
+            return _outcome("alvo", (tp1 - entry) * d / risk, end, best, alvo2=hit2)
+    if len(after) and now_ms - track["inicio_ms"] >= hours * 3_600_000:
+        last = float(after["close"].iat[-1])
+        return _outcome("expirou", (last - entry) * d / risk, now_ms, best)
+    return None
+
+
+def _outcome(kind: str, r: float, end_ms: int, best: float, **extra: Any) -> dict[str, Any]:
+    return {"resultado": kind, "resultado_r": round(r, 2), "max_favoravel_r": round(best, 2),
+            "resolvido_em": datetime.fromtimestamp(end_ms / 1000, UTC).isoformat(timespec="minutes"), **extra}
+
+
+def update_tracking(state: FeedState, candles_for: Callable[[str], pd.DataFrame | None], now_ms: int,
+                    dashboard: Any) -> int:
+    """Confere os gatilhos em acompanhamento e manda ao painel os que terminaram. Devolve quantos."""
+    done = 0
+    for event_id, track in list(state.tracking.items()):
+        try:
+            candles = candles_for(track["fonte"])
+        except Exception:  # um ativo sem dados não derruba o placar
+            candles = None
+        if candles is None or candles.empty:
+            if now_ms - track["inicio_ms"] > 3 * 86_400_000:
+                del state.tracking[event_id]   # sem dados há 3 dias: desiste
+            continue
+        result = resolve(track, candles, now_ms)
+        if result is None:
+            continue
+        payload = dict(track["payload"])
+        payload["details"] = {**payload.get("details", {}), **result}
+        if dashboard.send("signal", payload).ok:
+            del state.tracking[event_id]
+            done += 1
+    return done

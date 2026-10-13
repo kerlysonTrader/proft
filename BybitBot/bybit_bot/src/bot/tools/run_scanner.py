@@ -24,7 +24,7 @@ from bot.reporting.dashboard_client import DashboardClient
 from bot.scanner.regime import RegimeState
 from bot.scanner.scanner import LABEL_BY_LIST, Scanner, scanner_payload
 from bot.secrets import SecretProvider, load_dotenv_if_local
-from bot.signals.feed import FeedState, send_events
+from bot.signals.feed import FeedState, send_events, update_tracking
 from bot.storage.kline_store import KlineStore
 
 STATE_PATH = "data/scanner_state.json"
@@ -88,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
             exit_code = 0 if result.ok else 1
             sent, failed = send_events(scan.events, feed_state, dashboard)
             print(f"Painel (aba Sinais): {sent} eventos novos enviados, {failed} falhas")
+            closed = update_tracking(feed_state, lambda s: md.klines(s, "15", limit=96), scan.run_at_ms, dashboard)
+            print(f"Placar: {closed} gatilhos encerrados; {len(feed_state.tracking)} em acompanhamento")
             exit_code |= 1 if failed else 0
             dashboard.close()
     feed_state.save(resolve_path(FEED_STATE))   # situação dos planos (para detectar mudanças)

@@ -217,3 +217,14 @@ def test_estrutura_em_numeros_para_o_radar(scan, config):
     assert set(m15["medias"]) == {"9", "21", "50", "200"}
     assert m15["alinhamento"] in ("alta", "baixa", "nenhum") and isinstance(m15["eventos"], list)
     assert data["gatilho"] and "backtest" in data["nota"]
+
+
+def test_contexto_de_mercado_e_fatores(scan, config):
+    row = next(r for r in mt5_payload(scan, config.score, 150)["results"] if r["symbol"] == "ALTA · compra")
+    ctx, fat = row["structure"]["contexto"], row["structure"]["fatores"]
+    assert ctx["zona"] in ("desconto", "equilibrio", "premium") and 0 <= ctx["posicao"] <= 1
+    assert ctx["faixa_min"] <= ctx["preco"] <= ctx["faixa_max"] and ctx["vwap"] is not None
+    assert ctx["tendencia_dominante"] in ("alta", "baixa", "lateral")
+    assert fat["alta"] + fat["baixa"] + fat["neutro"] == len(fat["itens"]) >= 8
+    assert fat["vies"] in ("alta", "baixa", "neutro") and "não é probabilidade" in fat["nota"]
+    assert fat["alta"] > fat["baixa"]   # o ativo de teste está em alta

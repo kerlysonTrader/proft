@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from bot.indicators import atr, ema
+from bot.indicators import atr, ema, rsi
 from bot.signals.ote_fibo import Pivot, find_pivots
 
 TREND_LABEL = {1: "alta", -1: "baixa", 0: "lateral"}
@@ -335,7 +335,93 @@ def structure_bundle(frames: dict[str, pd.DataFrame], params: StructureParams | 
         t = rows[tf]
         if t["last_high"] == t["last_high"] and t["last_low"] == t["last_low"]:
             data["gatilho"] = watch_line(t, rows[ctx_tf], tf, ctx_tf).removeprefix("Gatilho a observar: ")
+    if tf in frames and ctx_tf in frames and tf in rows and ctx_tf in rows:
+        data["contexto"] = market_context(frames[tf], frames[ctx_tf], rows, params)
+        data["fatores"] = factor_count(rows, data["contexto"], frames[ctx_tf])
     return lines, data
+
+
+ZONE_LOW, ZONE_HIGH = 0.4, 0.6   # posição na faixa de 24 h: < 40 % desconto, > 60 % premium
+
+
+def market_context(m15: pd.DataFrame, h1: pd.DataFrame, rows: dict[str, dict[str, float]],
+                   params: StructureParams) -> dict[str, Any]:
+    """Contexto do momento: faixa das últimas 24 h (desconto/equilíbrio/premium), VWAP do dia (UTC),
+    suporte e resistência mais próximos (topos/fundos do 1H) e tendência dominante (4H + 1H)."""
+    close = float(m15["close"].iat[-1])
+    last24 = m15.iloc[-96:]
+    hi, lo = float(last24["high"].max()), float(last24["low"].min())
+    pos = (close - lo) / (hi - lo) if hi > lo else 0.5
+    zone = "desconto" if pos < ZONE_LOW else "premium" if pos > ZONE_HIGH else "equilibrio"
+
+    day_start = int(m15["start_ms"].iat[-1]) // 86_400_000 * 86_400_000
+    day = m15[m15["start_ms"] >= day_start]
+    vol = day["volume"].astype(float)
+    typical = (day["high"] + day["low"] + day["close"]) / 3
+    vwap = float((typical * vol).sum() / vol.sum()) if len(day) and vol.sum() > 0 else None
+
+    pivots = [pv for pv in find_pivots(h1.iloc[-120:], params.pivot_bars)]
+    supports = [pv.price for pv in pivots if not pv.is_high and pv.price < close]
+    resistances = [pv.price for pv in pivots if pv.is_high and pv.price > close]
+
+    t4, t1 = rows.get("4H", {}).get("trend"), rows.get("1H", {}).get("trend")
+    if t4 is not None and t1 is not None and t4 == t1 and t4 != 0:
+        dominant = TREND_LABEL[int(t4)]
+    elif t1 is not None and t4 is None and t1 != 0:
+        dominant = TREND_LABEL[int(t1)]
+    else:
+        dominant = "lateral"
+    return {"preco": close, "faixa_min": lo, "faixa_max": hi, "posicao": round(min(max(pos, 0.0), 1.0), 3),
+            "zona": zone, "vwap": vwap,
+            "preco_vs_vwap": None if vwap is None else ("acima" if close > vwap else "abaixo"),
+            "suporte": max(supports) if supports else None, "resistencia": min(resistances) if resistances else None,
+            "tendencia_dominante": dominant, "faixa_horas": 24}
+
+
+def factor_count(rows: dict[str, dict[str, float]], ctx: dict[str, Any], h1: pd.DataFrame) -> dict[str, Any]:
+    """Contagem descritiva de fatores de alta/baixa/neutros (não é probabilidade)."""
+    items: list[dict[str, str]] = []
+
+    def add(name: str, side: int, text: str) -> None:
+        items.append({"nome": name, "lado": {1: "alta", -1: "baixa", 0: "neutro"}[side], "texto": text})
+
+    for tf in ("4H", "1H", "15m"):
+        if tf in rows:
+            tr = int(rows[tf]["trend"])
+            add(f"Dow {tf}", tr, f"estrutura {TREND_LABEL[tr]} no {tf}")
+    if "15m" in rows:
+        al = int(rows["15m"]["ma_align"])
+        texts = {1: "MME 9 > 21 > 50 > 200", -1: "MME 9 < 21 < 50 < 200", 0: "médias sem alinhamento"}
+        add("Médias 15m", al, texts[al])
+        r15 = rows["15m"]
+        if r15["ema_long"] == r15["ema_long"]:
+            above = r15["close"] > r15["ema_long"]
+            add("MME200 15m", 1 if above else -1, f"preço {'acima' if above else 'abaixo'} da MME200 do 15m")
+    if "1H" in rows and rows["1H"]["ema_mid"] == rows["1H"]["ema_mid"]:
+        above = rows["1H"]["close"] > rows["1H"]["ema_mid"]
+        add("MME50 1H", 1 if above else -1, f"preço {'acima' if above else 'abaixo'} da MME50 do 1H")
+    if ctx.get("preco_vs_vwap"):
+        side = 1 if ctx["preco_vs_vwap"] == "acima" else -1
+        add("VWAP", side, f"preço {ctx['preco_vs_vwap']} da VWAP do dia")
+    r = rsi(h1["close"], 14)
+    if len(r) and r.iat[-1] == r.iat[-1]:
+        value = float(r.iat[-1])
+        side = 1 if value > 55 else -1 if value < 45 else 0
+        add("RSI 1H", side, f"RSI 1H em {value:.0f}")
+    if "15m" in rows:
+        ev = rows["15m"]
+        up = any(ev.get(k) for k in ("bos_up", "choch_up", "ltb_break", "wedge_up", "cross_up"))
+        down = any(ev.get(k) for k in ("bos_down", "choch_down", "lta_break", "wedge_down", "cross_down"))
+        side = 1 if up and not down else -1 if down and not up else 0
+        fired = [label for key, label in EVENT_LABELS.items() if ev.get(key)]
+        add("Última vela 15m", side, ", ".join(fired) if fired else "sem evento de estrutura")
+    zone_side = {"desconto": 1, "premium": -1}.get(ctx.get("zona", ""), 0)
+    add("Zona 24 h", zone_side, f"preço na zona de {ctx.get('zona', '?')} da faixa de 24 h")
+    n_up = sum(i["lado"] == "alta" for i in items)
+    n_down = sum(i["lado"] == "baixa" for i in items)
+    bias = "alta" if n_up - n_down >= 2 else "baixa" if n_down - n_up >= 2 else "neutro"
+    return {"alta": n_up, "baixa": n_down, "neutro": len(items) - n_up - n_down, "vies": bias, "itens": items,
+            "nota": "Contagem descritiva dos fatores, não é probabilidade de acerto"}
 
 
 def structure_reading(trig: pd.DataFrame, ctx: pd.DataFrame, params: StructureParams | None = None,

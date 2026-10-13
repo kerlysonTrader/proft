@@ -93,3 +93,62 @@ def test_cada_evento_vai_uma_vez(tmp_path, cfg):
     again = FeedState.load(tmp_path / "feed.json")
     assert send_events(events, again, dashboard) == (0, 0) and len(sent) == 1
     assert sent[0][0] == "signal"
+
+
+# ------------------------------------------------------------------ placar dos gatilhos
+def candles_after(rows, start=START):
+    import pandas as pd
+
+    return pd.DataFrame([{"start_ms": start + i * M15, "open": o, "high": h, "low": low, "close": c}
+                         for i, (o, h, low, c) in enumerate(rows)])
+
+
+TRACK = {"dir": 1, "entrada": 100.0, "stop": 98.0, "tp1": 103.0, "tp2": 106.0, "inicio_ms": START}
+
+
+@pytest.mark.parametrize("rows, expected, r", [
+    ([(100, 101, 99.5, 100.5), (100.5, 103.2, 100, 103)], "alvo", 1.5),        # alvo 1 primeiro
+    ([(100, 100.5, 97.9, 98.5)], "stop", -1.0),                                 # stop primeiro
+    ([(100, 103.5, 97.5, 101)], "stop", -1.0),                                  # os dois na mesma vela: stop
+])
+def test_resultado_do_gatilho(rows, expected, r):
+    from bot.signals.feed import resolve
+
+    res = resolve(TRACK, candles_after(rows), START + 10 * M15)
+    assert res["resultado"] == expected and res["resultado_r"] == r
+
+
+def test_gatilho_em_aberto_e_expirado():
+    from bot.signals.feed import TRACK_HOURS, resolve
+
+    rows = [(100, 101, 99.5, 101)] * 4
+    assert resolve(TRACK, candles_after(rows), START + 4 * M15) is None
+    res = resolve(TRACK, candles_after(rows), START + int(TRACK_HOURS * 3_600_000))
+    assert res["resultado"] == "expirou" and res["resultado_r"] == 0.5
+
+
+def test_venda_espelhada():
+    from bot.signals.feed import resolve
+
+    track = {"dir": -1, "entrada": 100.0, "stop": 102.0, "tp1": 97.0, "tp2": 94.0, "inicio_ms": START}
+    res = resolve(track, candles_after([(100, 100.5, 96.8, 97)]), START + M15)
+    assert res["resultado"] == "alvo" and res["resultado_r"] == 1.5
+
+
+def test_placar_envia_resultado_e_encerra(cfg):
+    from bot.signals.feed import update_tracking
+
+    m15, h1, now = uptrend_frames()
+    events = structure_events("cripto", "T", "T", m15, h1, now, cfg, directions=(1,))
+    sent = []
+    dashboard = SimpleNamespace(send=lambda kind, payload: sent.append(payload) or SimpleNamespace(ok=True))
+    state = FeedState()
+    send_events(events, state, dashboard)
+    assert list(state.tracking) == [events[0].event_id] and sent[0]["details"]["resultado"] == "aberto"
+    e = events[0]
+    rows = [(e.entry, e.tp1 * 1.001, e.entry * 0.9999, e.tp1)]          # alvo na vela seguinte
+    closed = update_tracking(state, lambda s: candles_after(rows, start=now), now + 2 * M15, dashboard)
+    assert closed == 1 and state.tracking == {}
+    final = sent[-1]
+    assert final["order_link_id"] == e.event_id and final["details"]["resultado"] == "alvo"
+    assert final["details"]["resultado_r"] == pytest.approx(cfg.exits.tp1_r, abs=0.01)

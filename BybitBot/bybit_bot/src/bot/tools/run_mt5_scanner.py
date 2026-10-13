@@ -19,6 +19,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from bot.config import load_config, resolve_path
+from bot.data.market_data import klines_to_frame
 from bot.logging_setup import setup_logging
 from bot.markets.mt5_scanner import (
     LABEL_BY_LIST,
@@ -32,7 +33,7 @@ from bot.markets.mt5_source import Mt5Error, Mt5Reader
 from bot.markets.stats import STATS_FILE, load_stats, load_stats_file
 from bot.reporting.dashboard_client import DashboardClient
 from bot.secrets import SecretProvider
-from bot.signals.feed import FeedState, send_events
+from bot.signals.feed import FeedState, send_events, update_tracking
 from bot.tools.run_scanner import gemini_analyst
 
 STATE_DIR = "data/mt5_state"
@@ -192,6 +193,9 @@ def run_once(reader: Mt5Reader, config, groups: list[str], analyst, dashboard, t
     code = 0
     if dashboard is not None:
         code = 0 if send_scan(scan, config, dashboard, feed_state) else 1
+        closed = update_tracking(feed_state, lambda s: klines_to_frame(reader.rates(s, "15", 96)), scan.run_at_ms,
+                                 dashboard)
+        print(f"Placar: {closed} gatilhos encerrados; {len(feed_state.tracking)} em acompanhamento")
     feed_state.save(resolve_path(FEED_STATE))   # situação dos planos e eventos já enviados
     return code
 
