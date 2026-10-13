@@ -168,8 +168,23 @@ class Mt5Config(StrictModel):
         return self
 
 
+class ScannerProfileConfig(StrictModel):
+    trigger_interval: Literal["15", "60"]
+    context_interval: Literal["60", "240"]
+    stop_pct_range: tuple[PositiveFloat, PositiveFloat]
+
+    @model_validator(mode="after")
+    def _check(self) -> ScannerProfileConfig:
+        if int(self.context_interval) <= int(self.trigger_interval):
+            raise ValueError("markets.scanner_cripto: contexto deve ser maior que o gatilho")
+        if self.stop_pct_range[0] >= self.stop_pct_range[1]:
+            raise ValueError("markets.scanner_cripto.stop_pct_range: mínimo deve ser menor que o máximo")
+        return self
+
+
 class MarketsConfig(StrictModel):
     cripto_perp: CryptoPerpConfig
+    scanner_cripto: ScannerProfileConfig
     mt5: Mt5Config
 
 
@@ -840,3 +855,13 @@ def ensure_live_allowed(config: BotConfig, env: dict[str, str] | None = None) ->
         raise LiveModeNotConfirmedError(f"o config está em modo {config.mode}, não live")
     if env.get("CONFIRM_LIVE") != "SIM":
         raise LiveModeNotConfirmedError("modo live bloqueado: defina CONFIRM_LIVE=SIM para confirmar")
+
+
+def with_profile(config: BotConfig, trigger: str, context: str,
+                 stop_range: tuple[float, float] | None = None) -> BotConfig:
+    """Cópia da config com os tempos gráficos dos setups (e a faixa de stop) de um perfil."""
+    setups = config.setups.model_copy(update={"trigger_interval": trigger, "context_interval": context})
+    if stop_range:
+        setups = setups.model_copy(update={"common": setups.common.model_copy(
+            update={"min_stop_pct": stop_range[0], "max_stop_pct": stop_range[1]})})
+    return config.model_copy(update={"setups": setups})

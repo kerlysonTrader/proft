@@ -19,6 +19,7 @@ from bot.bybit.instruments import InstrumentRegistry
 from bot.config import load_config, resolve_path
 from bot.data.market_data import MarketData
 from bot.logging_setup import setup_logging
+from bot.markets.stats import STATS_FILE, load_stats_file
 from bot.reporting.dashboard_client import DashboardClient
 from bot.scanner.regime import RegimeState
 from bot.scanner.scanner import LABEL_BY_LIST, Scanner, scanner_payload
@@ -45,7 +46,8 @@ def main(argv: list[str] | None = None) -> int:
     state_path = resolve_path(STATE_PATH)
     state = RegimeState.load(state_path)
 
-    scan = Scanner(md, registry, config, state, analyst=gemini_analyst(config)).run()
+    stats = load_stats_file(resolve_path(STATS_FILE)).get("cripto_spot_long")
+    scan = Scanner(md, registry, config, state, analyst=gemini_analyst(config), stats=stats).run()
     state.save(state_path)
 
     tz = ZoneInfo(config.timezone)

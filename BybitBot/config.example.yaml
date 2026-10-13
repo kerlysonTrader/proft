@@ -47,6 +47,10 @@ markets:                          # mercados além do cripto spot (scanner/assis
     directions: [long, short]
     fee_rate_per_side: 0.00055    # taxa taker VIP0 (ordens limite pagam 0,02 %); conservador no backtest
     history_db: data/history_perp.db
+  scanner_cripto:                 # perfil dos PLANOS do scanner cripto (day trade, como o MT5)
+    trigger_interval: "15"        # gatilho 15m
+    context_interval: "60"        # contexto 1H
+    stop_pct_range: [0.8, 8.0]    # faixa de stop do intraday (a do 1H era 1,5–8 %)
   mt5:                            # MT5 da corretora (Doo) — SOMENTE LEITURA de preços; roda no PC com o MT5 aberto
     enabled: true
     server_utc_offset_hours: 3    # fuso do servidor (conferido pelo último tick; usado se o mercado estiver fechado)

@@ -17,12 +17,15 @@ from typing import Any
 import pandas as pd
 
 from bot.ai.gemini_analyst import Analysis, GeminiAnalyst, analyze_many, now_brt
+from bot.config import with_profile
 from bot.data.market_data import MarketData
 from bot.logging_setup import get_logger
+from bot.markets.stats import SetupStats, stats_lines
 from bot.scanner.features import Features, compute_features, is_num
 from bot.scanner.regime import Regime, RegimeState, breadth_pct, evaluate_regime
 from bot.scanner.scoring import ScoreResult, classify, score_features
 from bot.scanner.universe import UniverseCoin, build_universe
+from bot.signals.base import TF_LABEL
 from bot.signals.plans import entry_plans, plan_dict, plan_lines
 from bot.signals.structure import StructureParams, structure_bundle
 
@@ -80,7 +83,9 @@ class _CoinData:
 
 class Scanner:
     def __init__(self, md: MarketData, registry: Any, config: Any, state: RegimeState,
-                 now_ms: Callable[[], int] | None = None, analyst: GeminiAnalyst | None = None) -> None:
+                 now_ms: Callable[[], int] | None = None, analyst: GeminiAnalyst | None = None,
+                 stats: dict[str, SetupStats] | None = None) -> None:
+        self.stats = stats or {}
         self.md, self.registry, self.cfg, self.state = md, registry, config, state
         self.analyst = analyst
         self._now_ms = now_ms or md.client.now_ms
@@ -145,8 +150,7 @@ class Scanner:
         for r in results:
             if r.watchlist in ("A", "B"):
                 d = data[r.coin.symbol]
-                plans = entry_plans(d.h1, d.h4, r.score.components, run_at, cfg)
-                r.plans = plan_lines(plans, cfg.setups.common, cfg.exits)
+                plans = self._plans(d, r, run_at)
                 r.plan_data = [plan_dict(p) for p in plans]
         params = StructureParams.from_config(cfg.setups.estrutura, cfg.indicators.atr_period)
         for r in results:
@@ -164,6 +168,21 @@ class Scanner:
             "watchlist_b": sum(r.watchlist == "B" for r in results), "duracao_s": round(duration / 1000, 1),
             "erros": len(errors)}})
         return scan
+
+    def _plans(self, d: _CoinData, r: CoinResult, run_at: int) -> list:
+        """Planos no perfil do scanner (day trade 15m/1H por padrão) com a estatística do backtest."""
+        prof = self.cfg.markets.scanner_cripto
+        pcfg = with_profile(self.cfg, prof.trigger_interval, prof.context_interval, prof.stop_pct_range)
+        frames = {"15": d.m15, "60": d.h1, "240": d.h4}
+        trig, ctx = frames[prof.trigger_interval], frames[prof.context_interval]
+        if trig is None or ctx is None:
+            r.plans = ["Plano: sem velas do tempo gráfico do gatilho nesta varredura"]
+            return []
+        plans = entry_plans(trig, ctx, r.score.components, run_at, pcfg)
+        tf = TF_LABEL[prof.trigger_interval]
+        r.plans = plan_lines(plans, pcfg.setups.common, pcfg.exits,
+                             footer=stats_lines(self.stats, "cripto spot · compra"), trigger_label=tf)
+        return plans
 
     def _check_depth(self, finalists: list[CoinResult]) -> None:
         """Profundidade do livro só para os finalistas (A/B). Falhou -> descartada."""

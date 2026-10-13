@@ -1,0 +1,202 @@
+{
+ "gerado_em": "2026-10-13T11:17:08+00:00",
+ "mercados": {
+  "mt5_metais_long": {
+   "pullback_tendencia": {
+    "trades": 77,
+    "win_rate": 44.15584415584416,
+    "expectancy_r": 0.32696280679929635
+   },
+   "rompimento_compressao": {
+    "trades": 17,
+    "win_rate": 47.05882352941176,
+    "expectancy_r": 0.5798407243150037
+   },
+   "todos": {
+    "trades": 94,
+    "win_rate": 44.680851063829785,
+    "expectancy_r": 0.3726960472010733
+   }
+  },
+  "mt5_metais_short": {
+   "pullback_tendencia": {
+    "trades": 21,
+    "win_rate": 42.857142857142854,
+    "expectancy_r": 0.2394119023090643
+   },
+   "rompimento_compressao": {
+    "trades": 4,
+    "win_rate": 25.0,
+    "expectancy_r": -0.6428024674422702
+   },
+   "todos": {
+    "trades": 25,
+    "win_rate": 40.0,
+    "expectancy_r": 0.09825760314885076
+   }
+  },
+  "mt5_forex_long": {
+   "pullback_tendencia": {
+    "trades": 224,
+    "win_rate": 25.0,
+    "expectancy_r": -0.285776929789426
+   },
+   "rompimento_compressao": {
+    "trades": 63,
+    "win_rate": 19.047619047619047,
+    "expectancy_r": -0.4325182910761655
+   },
+   "todos": {
+    "trades": 287,
+    "win_rate": 23.693379790940767,
+    "expectancy_r": -0.3179884481206615
+   }
+  },
+  "mt5_forex_short": {
+   "pullback_tendencia": {
+    "trades": 113,
+    "win_rate": 19.469026548672566,
+    "expectancy_r": -0.4621519964031693
+   },
+   "rompimento_compressao": {
+    "trades": 41,
+    "win_rate": 24.390243902439025,
+    "expectancy_r": -0.28867710428595983
+   },
+   "todos": {
+    "trades": 154,
+    "win_rate": 20.77922077922078,
+    "expectancy_r": -0.4159671225278084
+   }
+  },
+  "mt5_indices_long": {
+   "pullback_tendencia": {
+    "trades": 317,
+    "win_rate": 31.545741324921135,
+    "expectancy_r": -0.09548145942476637
+   },
+   "rompimento_compressao": {
+    "trades": 46,
+    "win_rate": 32.608695652173914,
+    "expectancy_r": -0.054118998622772196
+   },
+   "todos": {
+    "trades": 363,
+    "win_rate": 31.68044077134986,
+    "expectancy_r": -0.09023993546638694
+   }
+  },
+  "mt5_indices_short": {
+   "pullback_tendencia": {
+    "trades": 41,
+    "win_rate": 29.268292682926827,
+    "expectancy_r": -0.19827686134867953
+   },
+   "rompimento_compressao": {
+    "trades": 3,
+    "win_rate": 33.33333333333333,
+    "expectancy_r": -0.08093544072427061
+   },
+   "todos": {
+    "trades": 44,
+    "win_rate": 29.545454545454547,
+    "expectancy_r": -0.1902763099424698
+   }
+  },
+  "mt5_energia_long": {
+   "pullback_tendencia": {
+    "trades": 71,
+    "win_rate": 35.2112676056338,
+    "expectancy_r": -0.2762092634197863
+   },
+   "rompimento_compressao": {
+    "trades": 29,
+    "win_rate": 34.48275862068966,
+    "expectancy_r": -0.6843276773068214
+   },
+   "todos": {
+    "trades": 100,
+    "win_rate": 35.0,
+    "expectancy_r": -0.39456360344702646
+   }
+  },
+  "mt5_energia_short": {
+   "pullback_tendencia": {
+    "trades": 42,
+    "win_rate": 47.61904761904761,
+    "expectancy_r": -0.053750024416498225
+   },
+   "rompimento_compressao": {
+    "trades": 18,
+    "win_rate": 44.44444444444444,
+    "expectancy_r": -0.15408893576745017
+   },
+   "todos": {
+    "trades": 60,
+    "win_rate": 46.666666666666664,
+    "expectancy_r": -0.08385169782178382
+   }
+  },
+  "cripto_spot_long": {
+   "pullback_tendencia": {
+    "trades": 384,
+    "win_rate": 36.97916666666667,
+    "expectancy_r": -0.085974471946211
+   },
+   "rompimento_compressao": {
+    "trades": 22,
+    "win_rate": 40.909090909090914,
+    "expectancy_r": -0.022062759467475258
+   },
+   "todos": {
+    "trades": 406,
+    "win_rate": 37.19211822660098,
+    "expectancy_r": -0.08251127570352088
+   }
+  },
+  "cripto_perp_long": {
+   "ote_fibo": {
+    "trades": 1,
+    "win_rate": 100.0,
+    "expectancy_r": 0.7231340852084063
+   },
+   "pullback_tendencia": {
+    "trades": 408,
+    "win_rate": 37.5,
+    "expectancy_r": -0.027912536498174864
+   },
+   "rompimento_compressao": {
+    "trades": 38,
+    "win_rate": 50.0,
+    "expectancy_r": 0.3308010879363905
+   },
+   "todos": {
+    "trades": 447,
+    "win_rate": 38.702460850111855,
+    "expectancy_r": 0.004262327819990822
+   }
+  },
+  "cripto_perp_short": {
+   "ote_fibo": {
+    "trades": 1,
+    "win_rate": 0.0,
+    "expectancy_r": -1.1787374795672898
+   },
+   "pullback_tendencia": {
+    "trades": 497,
+    "win_rate": 37.82696177062374,
+    "expectancy_r": -0.05761317465301499
+   },
+   "rompimento_compressao": {
+    "trades": 87,
+    "win_rate": 43.67816091954023,
+    "expectancy_r": -0.043139996508427765
+   },
+   "todos": {
+    "trades": 585,
+    "win_rate": 38.63247863247864,
+    "expectancy_r": -0.057377205091194795
+   }
+  }
+ }
+}

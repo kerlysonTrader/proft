@@ -22,6 +22,7 @@ from typing import Any
 import pandas as pd
 
 from bot.ai.gemini_analyst import Analysis, GeminiAnalyst, analyze_many, now_brt
+from bot.config import with_profile
 from bot.data.market_data import klines_to_frame
 from bot.logging_setup import get_logger
 from bot.markets.mt5_source import Mt5Reader
@@ -51,12 +52,7 @@ def side_word(direction: int) -> str:
 
 def group_config(config: Any, group: str) -> Any:
     """Config do grupo: intraday 15m/1H e a faixa de stop do grupo."""
-    setups = config.setups.model_copy(update={"trigger_interval": TRIGGER, "context_interval": CONTEXT})
-    rng = config.markets.mt5.stop_pct_range.get(group)
-    if rng:
-        setups = setups.model_copy(update={"common": setups.common.model_copy(
-            update={"min_stop_pct": rng[0], "max_stop_pct": rng[1]})})
-    return config.model_copy(update={"setups": setups})
+    return with_profile(config, TRIGGER, CONTEXT, config.markets.mt5.stop_pct_range.get(group))
 
 
 @dataclass

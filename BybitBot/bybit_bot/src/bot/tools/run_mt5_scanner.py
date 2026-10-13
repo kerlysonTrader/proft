@@ -29,7 +29,7 @@ from bot.markets.mt5_scanner import (
     mt5_payload,
 )
 from bot.markets.mt5_source import Mt5Error, Mt5Reader
-from bot.markets.stats import load_stats
+from bot.markets.stats import STATS_FILE, load_stats, load_stats_file
 from bot.reporting.dashboard_client import DashboardClient
 from bot.secrets import SecretProvider
 from bot.tools.run_scanner import gemini_analyst
@@ -41,10 +41,12 @@ DEFAULT_PROJECT = "bybit-scanner-bot"
 
 def backtest_stats(config, groups: list[str]) -> dict:
     """(grupo, direção) -> estatística dos trades do run_backtest (labels mt5_<grupo>_<long|short>)."""
+    saved = load_stats_file(resolve_path(STATS_FILE))
     out = {}
     for group in groups:
         for direction, side in ((1, "long"), (-1, "short")):
-            out[(group, direction)] = load_stats(resolve_path(f"data/backtest/mt5_{group}_{side}_trades.csv"))
+            key = f"mt5_{group}_{side}"
+            out[(group, direction)] = saved.get(key) or load_stats(resolve_path(f"data/backtest/{key}_trades.csv"))
     return out
 
 

@@ -75,6 +75,8 @@ def test_categoria_diferente_de_spot_e_rejeitada(raw):
         (("bybit", "rest_url", "demo"), "http://api-demo.bybit.com", "https"),
         (("markets", "mt5", "stop_pct_range", "forex"), [0.8, 0.06], "menor que o máximo"),
         (("markets", "mt5", "stop_pct_range", "cripto"), [0.1, 1.0], "grupo desconhecido"),
+        (("markets", "scanner_cripto", "stop_pct_range"), [8.0, 0.8], "mínimo deve ser menor"),
+        (("markets", "scanner_cripto", "trigger_interval"), "60", "contexto deve ser maior"),
     ],
 )
 def test_valores_incoerentes_sao_rejeitados(raw, path, value, fragment):

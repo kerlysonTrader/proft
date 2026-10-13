@@ -7,7 +7,9 @@ se há vantagem medida ou não.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -60,3 +62,23 @@ def stats_lines(stats: dict[str, SetupStats], what: str) -> list[str]:
                else "⚠ SEM vantagem no histórico — não recomendado")
     return [f"Histórico do backtest ({what}, 15m/1H): {'; '.join(parts)} — {verdict}",
             "Informativo: você decide e executa; não é recomendação de investimento"]
+
+
+STATS_FILE = "config/backtest_stats.json"   # vai junto com o código para a VM
+
+
+def save_stats_file(path: str | Path, sources: dict[str, Path]) -> dict[str, int]:
+    """Grava {chave: {setup: estatística}} a partir dos CSVs de trades. Devolve trades por chave."""
+    data = {key: {setup: asdict(s) for setup, s in load_stats(csv).items()} for key, csv in sources.items()}
+    payload = {"gerado_em": datetime.now(UTC).isoformat(timespec="seconds"), "mercados": data}
+    Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {key: v.get("todos", {}).get("trades", 0) for key, v in data.items()}
+
+
+def load_stats_file(path: str | Path) -> dict[str, dict[str, SetupStats]]:
+    """{chave: {setup: SetupStats}}; vazio se o arquivo não existir."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))["mercados"]
+    except (FileNotFoundError, ValueError, KeyError):
+        return {}
+    return {key: {setup: SetupStats(**s) for setup, s in setups.items()} for key, setups in raw.items()}
